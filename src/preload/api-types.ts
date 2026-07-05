@@ -305,7 +305,8 @@ import type {
   RuntimeSyncWindowGraph,
   RuntimeTerminalCreateRequestPayload,
   RuntimeTerminalDriverState,
-  RuntimeTerminalPresentation
+  RuntimeTerminalPresentation,
+  RuntimeWorkspaceListModelResult
 } from '../shared/runtime-types'
 import type {
   CommitMessageAgentCapability,
@@ -1117,6 +1118,7 @@ export type PreloadApi = {
   }
   worktrees: {
     list: (args: { repoId: string }) => Promise<Worktree[]>
+    listModel?: (args?: { limit?: number }) => Promise<RuntimeWorkspaceListModelResult>
     listDetected: (args: { repoId: string }) => Promise<DetectedWorktreeListResult>
     listAll: () => Promise<Worktree[]>
     create: (args: CreateWorktreeArgs) => Promise<CreateWorktreeResult>
