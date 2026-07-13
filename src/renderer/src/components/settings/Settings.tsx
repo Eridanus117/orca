@@ -54,6 +54,7 @@ import { StatsPane } from '../stats/StatsPane'
 import { IntegrationsPane } from './IntegrationsPane'
 import { TasksPane } from './TasksPane'
 import { QuickCommandsPane } from './QuickCommandsPane'
+import { saveSourceControlAiSettings } from '@/lib/agent-catalog-authoring'
 import { DeveloperPermissionsPane } from './DeveloperPermissionsPane'
 import { ComputerUsePane } from './ComputerUsePane'
 import { MobileSettingsPane } from './MobileSettingsPane'
@@ -371,12 +372,12 @@ function Settings(): React.JSX.Element {
           }
           const latestConfig = readSourceControlAiSettings(latestSettings)
           const resolvedPatch = typeof patch === 'function' ? patch(latestConfig) : patch
-          await updateSettings({ sourceControlAi: { ...latestConfig, ...resolvedPatch } })
+          await saveSourceControlAiSettings({ ...latestConfig, ...resolvedPatch })
         })
       sourceControlAiWriteQueueRef.current = next
       return next
     },
-    [settings, updateSettings]
+    [settings]
   )
 
   const setSettingsRootNode = useCallback(
@@ -1296,7 +1297,6 @@ function Settings(): React.JSX.Element {
                       />
                       <CommitMessageAiPane
                         settings={settings}
-                        updateSettings={updateSettings}
                         writeSourceControlAiSettings={writeSourceControlAiSettings}
                         onCustomPromptDirtyChange={setHasUnsavedCommitPromptChanges}
                         customPromptDiscardSignal={sourceControlAiPromptDiscardSignal}
@@ -1361,7 +1361,6 @@ function Settings(): React.JSX.Element {
                   {isSectionMounted('quick-commands') ? (
                     <QuickCommandsPane
                       settings={settings}
-                      updateSettings={updateSettings}
                       addCommandIntentSignal={quickCommandAddIntentSignal}
                     />
                   ) : null}

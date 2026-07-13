@@ -1021,6 +1021,12 @@ export function useIpcEvents(): void {
           })
         return
       }
+      // Why: no-op for now — later units attach the mobile/paired snapshot refetch
+      // keyed by the announced revision. Handled here so the event is not routed to
+      // the activateWorktree fall-through below.
+      if (event.type === 'agentCatalogChanged' || event.type === 'agentReferencesChanged') {
+        return
+      }
       void ensureRuntimeEventRepoKnown(environmentId, event.repoId)
         .then(() => activateNotifiedWorktree(event, { allowRuntimeEnvironment: true }))
         .catch((error) => {
@@ -1434,6 +1440,7 @@ export function useIpcEvents(): void {
           launchConfig,
           launchToken,
           launchAgent,
+          launchNotices,
           title,
           ptyId,
           activate,
@@ -1547,6 +1554,16 @@ export function useIpcEvents(): void {
             if (shouldSurfaceOwner) {
               store.revealWorktreeInSidebar(worktreeId)
               focusTerminalInitiatedTab(tab.id, leafId)
+            }
+            if (launchNotices) {
+              // Mirror the host-owned launch notices onto the revealed tab so the
+              // banner renders; the host stays the owner and drives dismissal.
+              store.attachLaunchNotices({
+                worktreeId,
+                tabId: tab.id,
+                launchToken: launchNotices.launchToken,
+                notices: launchNotices.notices
+              })
             }
             // Why: only stamp the runtime-supplied title on freshly created tabs.
             // Existing tabs may have a user customTitle (set via UI rename) that

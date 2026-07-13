@@ -2,6 +2,7 @@
 import type { RuntimeRpcResponse } from '../../../shared/runtime-rpc-envelope'
 import type {
   BrowserTabCreateResult,
+  RuntimeMobileSessionCreateTerminalAgentLaunchFailure,
   RuntimeMobileSessionCreateTerminalResult,
   RuntimeMobileSessionTabMove,
   RuntimeMobileSessionTabMoveResult,
@@ -12,7 +13,9 @@ import type {
 import type { TerminalPaneSplitSource } from '../../../shared/feature-education-telemetry'
 import type { StartupCommandDelivery } from '../../../shared/codex-startup-delivery'
 import type { SleepingAgentLaunchConfig } from '../../../shared/agent-session-resume'
+import type { AgentLaunchInput } from '../../../shared/agent-launch-spawn-request'
 import type { TerminalPaneLayoutNode, TuiAgent } from '../../../shared/types'
+import type { AgentLaunchNoticeCode } from '../../../shared/agent-launch-contract'
 import type { AppState } from '../store/types'
 import { getRuntimeEnvironmentIdForWorktree } from '../lib/worktree-runtime-owner'
 import { useAppStore } from '../store'
@@ -56,6 +59,11 @@ export async function createWebRuntimeSessionTerminal(args: {
   launchConfig?: SleepingAgentLaunchConfig
   agent?: TuiAgent
   launchAgent?: TuiAgent
+  /** Sanctioned host-resolved launch path; the host owns command/config/token
+   *  assembly and this is the only field that admits a custom agent id. Accepts
+   *  the full input union (spawn/resume/vaultResume) — the runtime intercepts a
+   *  vaultResume arm on this same `session.tabs.createTerminal` handler. */
+  agentLaunch?: AgentLaunchInput
   activate?: boolean
   selectWorktree?: boolean
 }): Promise<boolean> {
@@ -85,13 +93,23 @@ export async function createWebRuntimeSessionTerminal(args: {
         ...(args.launchConfig ? { launchConfig: args.launchConfig } : {}),
         agent: args.agent,
         ...(args.launchAgent ? { launchAgent: args.launchAgent } : {}),
+        ...(args.agentLaunch ? { agentLaunch: args.agentLaunch } : {}),
         activate: args.activate !== false
       },
       timeoutMs: 15_000
     })
-    const createdTerminal = unwrapRuntimeRpcResult(
-      response as RuntimeRpcResponse<RuntimeMobileSessionCreateTerminalResult>
+    const created = unwrapRuntimeRpcResult(
+      response as RuntimeRpcResponse<
+        | RuntimeMobileSessionCreateTerminalResult
+        | RuntimeMobileSessionCreateTerminalAgentLaunchFailure
+      >
     )
+    // Why: a pre-spawn host-resolved agentLaunch failure is an RPC success that
+    // created NO tab; treat it as a launch failure for the web-host surface.
+    if (!('tab' in created)) {
+      return false
+    }
+    const createdTerminal = created
     if (args.activate !== false) {
       // Why: record focus intent so the reconcile follows the snapshot's active
       // tab to THIS new terminal, instead of sticky-keeping the prior tab.
@@ -740,6 +758,51 @@ export function setWebRuntimeTabProps(args: {
     .catch((error) => {
       console.warn(
         '[web-runtime-session] failed to set tab props:',
+        error instanceof Error ? error.message : String(error)
+      )
+    })
+  return true
+}
+
+/** Ask the remote host (owner) to dismiss a launch notice for this terminal. */
+export function dismissWebRuntimeLaunchNotice(args: {
+  worktreeId: string
+  tabId: string
+  launchToken: string
+  code: AgentLaunchNoticeCode
+}): boolean {
+  const environmentId =
+    getRuntimeEnvironmentIdForWorktree(useAppStore.getState(), args.worktreeId) ?? null
+  if (!environmentId || !isWebRuntimeSessionActive(environmentId)) {
+    return false
+  }
+  const state = useAppStore.getState()
+  void import('./web-session-tabs-sync')
+    .then(({ resolveHostSessionTabIdForWebSessionTab }) => {
+      const hostTabId =
+        resolveHostSessionTabIdForWebSessionTab(state, {
+          environmentId,
+          worktreeId: args.worktreeId,
+          tabId: args.tabId
+        }) ?? (isWebTerminalSurfaceTabId(args.tabId) ? toHostSessionTabId(args.tabId) : args.tabId)
+      return window.api.runtimeEnvironments.call({
+        selector: environmentId,
+        method: 'session.tabs.dismissLaunchNotice',
+        params: {
+          worktree: toRuntimeWorktreeSelector(args.worktreeId),
+          tabId: hostTabId,
+          launchToken: args.launchToken,
+          code: args.code
+        },
+        timeoutMs: 15_000
+      })
+    })
+    .then((response) => {
+      unwrapRuntimeRpcResult(response as RuntimeRpcResponse<{ ok: boolean; changed: boolean }>)
+    })
+    .catch((error) => {
+      console.warn(
+        '[web-runtime-session] failed to dismiss launch notice:',
         error instanceof Error ? error.message : String(error)
       )
     })
