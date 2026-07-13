@@ -4,7 +4,7 @@ import type * as GitUsernameModule from '../git/git-username'
 import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import type { CreateWorktreeResult, GitWorktreeInfo, Worktree } from '../../shared/types'
+import type { CreatedWorktreeResult, GitWorktreeInfo, Worktree } from '../../shared/types'
 import * as localWorktreeFilesystem from '../local-worktree-filesystem'
 
 const ORIGINAL_PLATFORM = process.platform
@@ -290,6 +290,8 @@ describe('registerWorktreeHandlers', () => {
     createTerminal: ReturnType<typeof vi.fn>
     splitTerminal: ReturnType<typeof vi.fn>
     notifyWorktreesChangedForRemoteClients: ReturnType<typeof vi.fn>
+    prepareLocalWorktreeCreateAgentLaunch: ReturnType<typeof vi.fn>
+    finishLocalWorktreeCreateAgentLaunch: ReturnType<typeof vi.fn>
   }
 
   beforeEach(() => {
@@ -501,7 +503,9 @@ describe('registerWorktreeHandlers', () => {
         tabId: 'tab-startup',
         paneRuntimeId: -1
       }),
-      notifyWorktreesChangedForRemoteClients: vi.fn()
+      notifyWorktreesChangedForRemoteClients: vi.fn(),
+      prepareLocalWorktreeCreateAgentLaunch: vi.fn(),
+      finishLocalWorktreeCreateAgentLaunch: vi.fn()
     }
     registerWorktreeHandlers(mainWindow as never, store as never, runtimeStub as never)
   })
@@ -657,6 +661,123 @@ describe('registerWorktreeHandlers', () => {
 
     expect(runtimeStub.fetchRemoteWithCache).toHaveBeenCalledWith('/workspace/repo', 'origin')
     expect(addWorktreeMock).toHaveBeenCalled()
+  })
+
+  it('returns the in-band created:false rejection when the pre-git agent launch fails, creating no worktree', async () => {
+    // Stage 1 (capacity/identity) rejects before git; the desktop-local IPC path
+    // must carry it in-band as created:false, never throw, and never touch git.
+    runtimeStub.prepareLocalWorktreeCreateAgentLaunch.mockResolvedValue({
+      ok: false,
+      failure: { code: 'custom_agent_disabled' }
+    })
+
+    const result = await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: 'pr-title',
+      agentLaunch: { selection: { kind: 'default' }, allowEmptyPromptLaunch: true }
+    })
+
+    expect(result).toEqual({
+      created: false,
+      agentLaunchResult: { status: 'failed', failure: { code: 'custom_agent_disabled' } }
+    })
+    expect(addWorktreeMock).not.toHaveBeenCalled()
+    expect(runtimeStub.finishLocalWorktreeCreateAgentLaunch).not.toHaveBeenCalled()
+  })
+
+  it('returns the in-band created:false rejected arm for a pre-git control-plane rejection', async () => {
+    runtimeStub.prepareLocalWorktreeCreateAgentLaunch.mockResolvedValue({
+      ok: false,
+      requestError: { code: 'idempotency_conflict' }
+    })
+
+    const result = await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: 'pr-title',
+      agentLaunch: { selection: { kind: 'default' }, allowEmptyPromptLaunch: true }
+    })
+
+    expect(result).toEqual({
+      created: false,
+      agentLaunchResult: { status: 'rejected', requestError: { code: 'idempotency_conflict' } }
+    })
+    expect(addWorktreeMock).not.toHaveBeenCalled()
+    expect(runtimeStub.finishLocalWorktreeCreateAgentLaunch).not.toHaveBeenCalled()
+  })
+
+  it('merges the launched host agent result into the created worktree after git succeeds', async () => {
+    listWorktreesMock.mockResolvedValue([
+      {
+        path: '/workspace/agent-wt',
+        head: 'created-sha',
+        branch: 'refs/heads/agent-wt',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+    const release = vi.fn()
+    runtimeStub.prepareLocalWorktreeCreateAgentLaunch.mockResolvedValue({
+      ok: true,
+      release,
+      finish: vi.fn()
+    })
+    runtimeStub.finishLocalWorktreeCreateAgentLaunch.mockResolvedValue({
+      agentLaunchResult: {
+        status: 'launched',
+        receipt: {
+          requestedAgent: 'codex',
+          baseAgent: 'codex',
+          notices: [],
+          launchToken: 'tok-1',
+          catalogRevision: 1
+        }
+      },
+      startupTerminal: { spawned: true, handle: 'term-1', surface: 'visible' }
+    })
+
+    const result = await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: 'agent-wt',
+      agentLaunch: { selection: { kind: 'default' }, allowEmptyPromptLaunch: true }
+    })
+
+    expect(addWorktreeMock).toHaveBeenCalled()
+    // Stage 2 receives the prepared hold + the authoritative post-create paths.
+    expect(runtimeStub.finishLocalWorktreeCreateAgentLaunch).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: true }),
+      expect.any(String),
+      expect.objectContaining({ repoPath: '/workspace/repo', worktreePath: '/workspace/agent-wt' }),
+      undefined
+    )
+    // The launched arm + the host-spawned startup terminal ride the created result.
+    expect(result).toMatchObject({
+      agentLaunchResult: { status: 'launched', receipt: { requestedAgent: 'codex' } },
+      startupTerminal: { spawned: true, handle: 'term-1' }
+    })
+    expect(release).not.toHaveBeenCalled()
+  })
+
+  it('releases the reservation and skips stage 2 when git creation throws after prepare', async () => {
+    const release = vi.fn()
+    runtimeStub.prepareLocalWorktreeCreateAgentLaunch.mockResolvedValue({
+      ok: true,
+      release,
+      finish: vi.fn()
+    })
+    addWorktreeMock.mockRejectedValueOnce(new Error('git worktree add failed'))
+
+    await expect(
+      handlers['worktrees:create'](null, {
+        repoId: 'repo-1',
+        name: 'agent-wt-throw',
+        agentLaunch: { selection: { kind: 'default' }, allowEmptyPromptLaunch: true }
+      })
+    ).rejects.toThrow('git worktree add failed')
+
+    // A held reservation must never burn capacity forever when git threw before
+    // the worktree existed, and no terminal is host-spawned for a missing worktree.
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(runtimeStub.finishLocalWorktreeCreateAgentLaunch).not.toHaveBeenCalled()
   })
 
   it('fetches origin when creating from a local branch base containing slashes', async () => {
@@ -831,7 +952,7 @@ describe('registerWorktreeHandlers', () => {
     const result = (await handlers['worktrees:create'](null, {
       repoId: 'repo-1',
       name: 'improve-dashboard'
-    })) as CreateWorktreeResult
+    })) as CreatedWorktreeResult
 
     expect(addWorktreeMock).toHaveBeenCalledWith(
       '/workspace/repo',
@@ -3154,7 +3275,7 @@ describe('registerWorktreeHandlers', () => {
     const result = (await handlers['worktrees:create'](null, {
       repoId: 'repo-ssh',
       name: 'improve-dashboard'
-    })) as CreateWorktreeResult
+    })) as CreatedWorktreeResult
 
     expect(provider.exec).toHaveBeenCalledWith(
       ['merge-base', '--is-ancestor', 'refs/heads/main', 'refs/remotes/origin/main'],
@@ -3251,7 +3372,7 @@ describe('registerWorktreeHandlers', () => {
     const result = (await handlers['worktrees:create'](null, {
       repoId: 'repo-ssh',
       name: 'improve-dashboard'
-    })) as CreateWorktreeResult
+    })) as CreatedWorktreeResult
 
     expect(provider.exec).toHaveBeenCalledWith(
       ['merge-base', '--is-ancestor', 'refs/heads/main', 'refs/remotes/origin/main'],
@@ -3463,7 +3584,7 @@ describe('registerWorktreeHandlers', () => {
     const result = (await handlers['worktrees:create'](null, {
       repoId: 'repo-ssh',
       name: 'improve-dashboard'
-    })) as CreateWorktreeResult
+    })) as CreatedWorktreeResult
 
     expect(provider.refreshLocalBaseRefForWorktreeCreate).toHaveBeenCalledWith({
       repoPath: '/remote/repo',
@@ -4862,7 +4983,7 @@ describe('registerWorktreeHandlers', () => {
     )
     expect(runtimeStub.fetchRemoteWithCache).not.toHaveBeenCalled()
     resolveFetch()
-    const result = (await createPromise) as CreateWorktreeResult
+    const result = (await createPromise) as CreatedWorktreeResult
     expect(addWorktreeMock).toHaveBeenCalled()
     expect(result.worktree.id).toBe('repo-1::/workspace/improve-dashboard')
     expect(store.setWorktreeMeta).toHaveBeenCalledWith(
@@ -4919,7 +5040,7 @@ describe('registerWorktreeHandlers', () => {
     const result = (await handlers['worktrees:create'](null, {
       repoId: 'repo-1',
       name: 'improve-dashboard'
-    })) as CreateWorktreeResult
+    })) as CreatedWorktreeResult
 
     expect(addWorktreeMock).toHaveBeenCalled()
     expect(runtimeStub.resolveRemoteTrackingBase).toHaveBeenCalledWith(
@@ -5103,7 +5224,7 @@ describe('registerWorktreeHandlers', () => {
     const result = (await handlers['worktrees:create'](null, {
       repoId: 'repo-1',
       name: 'improve-dashboard'
-    })) as CreateWorktreeResult
+    })) as CreatedWorktreeResult
 
     expect(runtimeStub.getOrStartRemoteTrackingBaseRefresh).toHaveBeenCalledWith(
       '/workspace/repo',
@@ -5146,7 +5267,7 @@ describe('registerWorktreeHandlers', () => {
     const result = (await handlers['worktrees:create'](null, {
       repoId: 'repo-1',
       name: 'improve-dashboard'
-    })) as CreateWorktreeResult
+    })) as CreatedWorktreeResult
 
     expect(addWorktreeMock).toHaveBeenCalledWith(
       '/workspace/repo',

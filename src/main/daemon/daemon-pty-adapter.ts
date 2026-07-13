@@ -238,6 +238,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         command: opts.command,
         startupCommandDelivery: opts.startupCommandDelivery,
         launchAgent: opts.launchAgent,
+        ...(opts.launchToken ? { launchToken: opts.launchToken } : {}),
         // Why: without this, the daemon always spawns cmd.exe (COMSPEC) or
         // PowerShell as a fallback — regardless of which shell the renderer
         // asked for in the "+" menu or persisted as the default. Forwarding
