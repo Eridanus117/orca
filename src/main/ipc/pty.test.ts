@@ -186,6 +186,11 @@ vi.mock('../cli/linux-terminal-orca-cli-shim', () => ({
     join(options.userDataPath, 'linux-orca-cli-shim')
 }))
 
+vi.mock('../cli/local-fork-terminal-orca-cli-shim', () => ({
+  ensureLocalForkTerminalOrcaCliShimDir: (options: { userDataPath: string }) =>
+    join(options.userDataPath, 'local-fork-orca-cli-shim')
+}))
+
 vi.mock('../memory/pty-registry', () => ({
   registerPty: registerPtyMock,
   unregisterPty: unregisterPtyMock
@@ -1773,12 +1778,18 @@ describe('registerPtyHandlers', () => {
       })
 
       it('pins packaged fork terminals to the fork profile and CLI', async () => {
-        const env = await daemonSpawnAndGetEnv({}, undefined, undefined, {
-          ORCA_LOCAL_FORK_CLI_COMMAND: 'orca-fork'
-        })
+        const env = await daemonSpawnAndGetEnv(
+          { PATH: ['/usr/local/bin', '/usr/bin'].join(delimiter) },
+          undefined,
+          undefined,
+          { ORCA_LOCAL_FORK_CLI_COMMAND: 'orca-fork' }
+        )
 
         expect(env.ORCA_USER_DATA_PATH).toBe('/tmp/orca-user-data')
         expect(env.ORCA_CLI_COMMAND).toBe('orca-fork')
+        expect(env.PATH.split(delimiter)[0]).toBe(
+          join('/tmp/orca-user-data', 'local-fork-orca-cli-shim')
+        )
       })
 
       it('injects the agent-hook receiver env on the daemon path', async () => {
