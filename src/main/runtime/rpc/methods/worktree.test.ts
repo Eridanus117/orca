@@ -766,7 +766,7 @@ describe('worktree RPC methods', () => {
     )
   })
 
-  it('forwards push target clears through worktree.set', async () => {
+  it('forwards push target clears and Folder Workspace parents through worktree.set', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',
       dedupeWorktreeCreate: passthroughDedupe,
@@ -778,7 +778,8 @@ describe('worktree RPC methods', () => {
       makeRequest('worktree.set', {
         worktree: 'id:wt-1',
         linkedPR: null,
-        pushTarget: null
+        pushTarget: null,
+        parentWorkspace: 'folder:folder-1'
       })
     )
 
@@ -787,7 +788,12 @@ describe('worktree RPC methods', () => {
       'id:wt-1',
       expect.objectContaining({
         linkedPR: null,
-        pushTarget: null
+        pushTarget: null,
+        lineage: {
+          parentWorkspace: 'folder:folder-1',
+          parentWorktree: undefined,
+          noParent: false
+        }
       })
     )
   })
@@ -809,7 +815,7 @@ describe('worktree RPC methods', () => {
     )
 
     expect(response).toMatchObject({ ok: false })
-    expect(JSON.stringify(response)).toContain('Choose either --parent-worktree or --no-parent')
+    expect(JSON.stringify(response)).toContain('Choose either one parent selector or --no-parent')
     expect(runtime.updateManagedWorktreeMeta).not.toHaveBeenCalled()
   })
 

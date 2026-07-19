@@ -456,8 +456,8 @@ describe('orca root help', () => {
 
     const setHelp = String(logSpy.mock.calls[0][0])
     expect(setHelp).not.toContain('--parent-workspace')
-    expect(setHelp).not.toContain('folder:<id>')
-    expect(setHelp).not.toContain('worktree:<id>')
+    expect(setHelp).toContain('folder:<id>')
+    expect(setHelp).toContain('worktree:<worktreeId>')
     expect(callMock).not.toHaveBeenCalled()
   })
 
@@ -841,6 +841,43 @@ describe('orca cli worktree awareness', () => {
       linkedIssue: undefined,
       comment: undefined,
       parentWorktree: 'id:repo::/tmp/repo/parent',
+      noParent: false
+    })
+  })
+
+  it('routes Folder Workspace parents through parentWorkspace on worktree.set', async () => {
+    queueFixtures(
+      callMock,
+      okFixture('req_set_folder_parent', {
+        worktree: {
+          ...buildWorktree('/tmp/repo/child', 'feature/child'),
+          parentWorktreeId: null,
+          childWorktreeIds: []
+        }
+      })
+    )
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(
+      [
+        'worktree',
+        'set',
+        '--worktree',
+        'id:repo::/tmp/repo/child',
+        '--parent-worktree',
+        'folder:folder-1',
+        '--json'
+      ],
+      '/tmp/repo'
+    )
+
+    expect(callMock).toHaveBeenCalledWith('worktree.set', {
+      worktree: 'id:repo::/tmp/repo/child',
+      displayName: undefined,
+      linkedIssue: undefined,
+      comment: undefined,
+      parentWorktree: undefined,
+      parentWorkspace: 'folder:folder-1',
       noParent: false
     })
   })
