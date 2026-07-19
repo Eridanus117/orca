@@ -85,7 +85,7 @@ export const TUI_AGENT_CONFIG: Record<TuiAgent, TuiAgentConfig> = {
     // Why: this is an Orca-provided launch mode, not a separate upstream
     // binary. Detection follows the Orca CLI and requires Claude below.
     detectCmd: 'orca',
-    detectCmdAliases: ['orca-dev', 'orca-ide', 'orca-fork'],
+    detectCmdAliases: ['orca-dev', 'orca-ide'],
     // Why: the Orca shim alone exists on fresh installs. Require Claude too so
     // onboarding does not report Agent Teams when no agent CLI is installed.
     detectRequiredCommands: ['claude'],

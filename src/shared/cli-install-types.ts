@@ -4,6 +4,7 @@ export type CliInstallUnsupportedReason =
   | 'platform_not_supported'
   | 'launcher_missing'
   | 'launch_mode_unavailable'
+  | 'shared_distribution'
 
 export type CliInstallMethod = 'symlink' | 'wrapper'
 

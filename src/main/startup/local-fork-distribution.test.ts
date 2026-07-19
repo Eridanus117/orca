@@ -9,12 +9,11 @@ import {
 
 const tempDirectories: string[] = []
 const validIdentity = {
-  schema: 'orca.local-distribution/v1',
+  schema: 'orca.local-distribution/v2',
   kind: 'local-fork',
   appId: 'com.eridanus117.orca-fork',
   productName: 'Orca Fork',
-  userDataDirName: 'orca-fork',
-  cliCommand: 'orca-fork',
+  userDataDirName: 'orca',
   executableName: 'Orca'
 }
 
@@ -52,7 +51,7 @@ describe('local fork distribution', () => {
     ).toEqual(validIdentity)
   })
 
-  it('rejects a partial fork build instead of falling back to official userData', () => {
+  it('rejects a partial fork build instead of mixing distribution identities', () => {
     expect(() =>
       resolveLocalForkDistribution({
         resourcesPath: createResources(),

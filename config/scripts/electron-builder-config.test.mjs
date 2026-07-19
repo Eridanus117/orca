@@ -144,7 +144,7 @@ describe('electron-builder config', () => {
     }
   })
 
-  it('keeps the official defaults and emits an isolated local fork bundle on demand', () => {
+  it('keeps official defaults and emits a shared-profile local fork bundle on demand', () => {
     expect(electronBuilderConfig).toMatchObject({
       appId: 'com.stablyai.orca',
       productName: 'Orca'
@@ -177,8 +177,8 @@ describe('electron-builder config', () => {
             to: 'orca-fork-distribution.json'
           },
           {
-            from: 'resources/darwin/bin/orca-fork',
-            to: 'bin/orca-fork'
+            from: 'resources/darwin/bin/orca',
+            to: 'bin/orca'
           }
         ])
       )

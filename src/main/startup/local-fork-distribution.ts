@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export const LOCAL_FORK_DISTRIBUTION_MARKER = 'orca-fork-distribution.json'
-const LOCAL_FORK_SCHEMA = 'orca.local-distribution/v1'
+const LOCAL_FORK_SCHEMA = 'orca.local-distribution/v2'
 
 export type LocalForkDistribution = {
   schema: typeof LOCAL_FORK_SCHEMA
@@ -10,7 +10,6 @@ export type LocalForkDistribution = {
   appId: string
   productName: string
   userDataDirName: string
-  cliCommand: string
   executableName: string
 }
 
@@ -35,7 +34,6 @@ function parseLocalForkDistribution(value: unknown): LocalForkDistribution | nul
     !isNonEmptyString(candidate.appId) ||
     !isNonEmptyString(candidate.productName) ||
     !isNonEmptyString(candidate.userDataDirName) ||
-    !isNonEmptyString(candidate.cliCommand) ||
     !isNonEmptyString(candidate.executableName)
   ) {
     return null
@@ -76,8 +74,8 @@ export function resolveLocalForkDistribution(
     return null
   }
 
-  // Why: falling back to official identity after a partial fork build could
-  // write fork state into Orca's production profile, so both signals must agree.
+  // Why: a partial Fork build would mix the official identity/updater with Fork
+  // code, so the compiled identity and packaged marker must agree.
   if (compiledLocalForkBuild !== Boolean(marker)) {
     throw new Error(
       `Orca Fork identity mismatch: compiled=${compiledLocalForkBuild} marker=${Boolean(marker)}`

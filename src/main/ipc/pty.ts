@@ -81,7 +81,6 @@ import {
   resolveAttributionShellFamily
 } from '../attribution/terminal-attribution'
 import { ensureLinuxTerminalOrcaCliShimDir } from '../cli/linux-terminal-orca-cli-shim'
-import { ensureLocalForkTerminalOrcaCliShimDir } from '../cli/local-fork-terminal-orca-cli-shim'
 import { registerPty, unregisterPty } from '../memory/pty-registry'
 import { advertisedUrlWatcher } from '../ports/advertised-url-watcher'
 import { track } from '../telemetry/client'
@@ -580,8 +579,6 @@ export type BuildPtyHostEnvOptions = {
   /** Keep indexed Git config off the sparse daemon wire; the daemon appends
    *  guard entries after merging its authoritative inherited environment. */
   deferGitConfigGuardToDaemon?: boolean
-  /** Packaged fork command exported by the early bootstrap and inherited by the daemon. */
-  localForkCliCommand?: string | null
 }
 
 function readInheritedPath(baseEnv: Record<string, string>): string {
@@ -1009,30 +1006,11 @@ export function buildPtyHostEnv(
   }
 
   // Why: WSL shells need the managed userData root for shell-ready wrappers; dev-mode terminals need the same export so `orca` targets the live dev instance.
-  const localForkCliCommand =
-    opts.localForkCliCommand ?? process.env.ORCA_LOCAL_FORK_CLI_COMMAND ?? null
   if (opts.isWsl) {
     baseEnv.ORCA_USER_DATA_PATH = opts.userDataPath
     // Why: managed WSL registration deliberately uses `orca-ide`; exposing
     // that literal keeps agent guidance scoped to WSL without a bare-orca shim.
     baseEnv.ORCA_CLI_COMMAND = opts.isPackaged ? 'orca-ide' : 'orca-dev'
-  } else if (opts.isPackaged && localForkCliCommand) {
-    // Why: the fork's runtime metadata and daemon socket live under its own
-    // userData root, so nested agents must keep calling the matching CLI.
-    baseEnv.ORCA_USER_DATA_PATH = opts.userDataPath
-    baseEnv.ORCA_CLI_COMMAND = localForkCliCommand
-    // Why: older skills and Agent Teams still invoke bare `orca`; scope the
-    // compatibility name to Fork-managed PTYs so it cannot reach official Orca.
-    const shimDir = ensureLocalForkTerminalOrcaCliShimDir({
-      userDataPath: opts.userDataPath,
-      cliCommand: localForkCliCommand
-    })
-    if (shimDir) {
-      const inheritedEntries = readInheritedPath(baseEnv)
-        .split(delimiter)
-        .filter((entry) => entry.length > 0 && entry !== shimDir)
-      baseEnv.PATH = [shimDir, ...inheritedEntries].join(delimiter)
-    }
   } else {
     if (!opts.isPackaged) {
       baseEnv.ORCA_USER_DATA_PATH ??= opts.userDataPath
@@ -1048,7 +1026,7 @@ export function buildPtyHostEnv(
     // the current working directory (a foot-gun we don't want to create
     // for dev terminals).
     baseEnv.PATH = inheritedPath ? `${devCliBin}${delimiter}${inheritedPath}` : devCliBin
-  } else if (process.platform === 'linux' && !localForkCliCommand) {
+  } else if (process.platform === 'linux') {
     // Why: the Linux CLI installs as `orca-ide` (never shadowing GNOME's
     // /usr/bin/orca screen reader), but agent-facing guidance invokes bare
     // `orca`. Scope a bare-`orca` shim to Orca-managed PTYs so agents reach

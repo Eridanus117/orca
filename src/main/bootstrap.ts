@@ -8,11 +8,11 @@ if (localForkDistribution) {
   app.setName(localForkDistribution.productName)
   app.setPath('userData', join(appDataPath, localForkDistribution.userDataDirName))
   process.env.ORCA_USER_DATA_PATH = app.getPath('userData')
-  process.env.ORCA_LOCAL_FORK_CLI_COMMAND = localForkDistribution.cliCommand
-} else {
-  delete process.env.ORCA_LOCAL_FORK_CLI_COMMAND
+  // Why: a diagnostic lock bypass would allow both app bundles to write the
+  // shared profile concurrently, which this distribution never supports.
+  delete process.env.ORCA_BYPASS_SINGLE_INSTANCE_LOCK
 }
 
-// Why: userData, lock, runtime socket, logs, and updater state must be isolated
-// before importing any main module whose top-level code can resolve app paths.
+// Why: both app bundles intentionally share one profile and its single-instance
+// lock; the path must be fixed before any main module resolves app storage.
 void import('./index')

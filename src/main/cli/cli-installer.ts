@@ -76,9 +76,6 @@ export class CliInstaller {
   private readonly localForkDistribution: LocalForkDistribution | null
 
   private get commandName(): string {
-    if (this.localForkDistribution) {
-      return this.localForkDistribution.cliCommand
-    }
     if (!this.isPackaged && !this.commandPathOverride) {
       // Why: development builds must not claim the production shell command.
       return DEV_COMMAND_NAME
@@ -114,11 +111,9 @@ export class CliInstaller {
     // defaultMacCommandPath is a test seam: it feeds into the existence check
     // so tests can simulate arm64 without relying on the real /usr/local/bin.
     const candidateMacPath = options.defaultMacCommandPath ?? DEFAULT_MAC_COMMAND_PATH
-    this.macCommandPath = this.localForkDistribution
-      ? join(this.homePath, '.local', 'bin', this.localForkDistribution.cliCommand)
-      : existsSync(dirname(candidateMacPath))
-        ? candidateMacPath
-        : join(this.homePath, '.local', 'bin', 'orca')
+    this.macCommandPath = existsSync(dirname(candidateMacPath))
+      ? candidateMacPath
+      : join(this.homePath, '.local', 'bin', 'orca')
     this.privilegedRunner = options.privilegedRunner ?? runMacPrivilegedCommand
     this.userPathReader = options.userPathReader ?? (() => readWindowsUserPath())
     this.userPathWriter = options.userPathWriter ?? ((value) => writeWindowsUserPath(value))
@@ -129,6 +124,16 @@ export class CliInstaller {
   }
 
   async getStatus(): Promise<CliInstallStatus> {
+    const status = await this.getMutableDistributionStatus()
+    return this.localForkDistribution ? this.asSharedDistributionStatus(status) : status
+  }
+
+  /**
+   * Resolves the normal Orca CLI registration state.
+   *
+   * @returns The mutable registration status used by the official distribution.
+   */
+  private async getMutableDistributionStatus(): Promise<CliInstallStatus> {
     const defaultSpec = this.resolveInstallSpec()
     if (!defaultSpec) {
       return {
@@ -184,6 +189,7 @@ export class CliInstaller {
   }
 
   async install(): Promise<CliInstallStatus> {
+    this.assertCliMutationAllowed()
     const status = await this.getStatus()
     if (!status.supported || !status.commandPath || !status.launcherPath || !status.installMethod) {
       throw new Error(status.detail ?? 'CLI registration is unavailable on this build.')
@@ -222,6 +228,7 @@ export class CliInstaller {
   }
 
   async remove(): Promise<CliInstallStatus> {
+    this.assertCliMutationAllowed()
     const status = await this.getStatus()
     if (!status.supported || !status.commandPath || !status.launcherPath || !status.installMethod) {
       return status
@@ -373,7 +380,7 @@ export class CliInstaller {
     if (this.platform === 'win32') {
       // Why: NSIS /D installs can live outside LOCALAPPDATA. The packaged
       // resources directory is the authoritative native launcher location.
-      return getBundledLauncherPath(this.platform, this.resourcesPath, this.commandName)
+      return getBundledLauncherPath(this.platform, this.resourcesPath)
     }
 
     return null
@@ -389,11 +396,7 @@ export class CliInstaller {
     }
 
     if (this.isPackaged) {
-      const bundledPath = getBundledLauncherPath(
-        this.platform,
-        this.resourcesPath,
-        this.commandName
-      )
+      const bundledPath = getBundledLauncherPath(this.platform, this.resourcesPath)
       return bundledPath && existsSync(bundledPath) ? bundledPath : null
     }
 
@@ -779,6 +782,42 @@ export class CliInstaller {
       currentTarget: args.currentTarget,
       unsupportedReason: null,
       detail: args.detail
+    }
+  }
+
+  /**
+   * Makes the shared logical command visible without allowing the Fork to
+   * replace or remove the official app's global registration.
+   *
+   * @param status Registration state resolved against the Fork's bundled launcher.
+   * @returns A read-only status for the shared `orca` command.
+   */
+  private asSharedDistributionStatus(status: CliInstallStatus): CliInstallStatus {
+    const officialLauncherIsActive =
+      status.state === 'stale' &&
+      status.currentTarget !== null &&
+      /(?:^|[/\\])Orca\.app[/\\]Contents[/\\]Resources[/\\]bin[/\\]orca$/u.test(
+        status.currentTarget
+      )
+    const state = officialLauncherIsActive ? 'installed' : status.state
+    return {
+      ...status,
+      supported: false,
+      state,
+      unsupportedReason: 'shared_distribution',
+      detail:
+        state === 'installed'
+          ? 'The shared `orca` command is managed by the official Orca app.'
+          : 'Register the shared `orca` command from the official Orca app.'
+    }
+  }
+
+  /**
+   * Prevents the Fork from taking ownership of the canonical global command.
+   */
+  private assertCliMutationAllowed(): void {
+    if (this.localForkDistribution) {
+      throw new Error('Manage the shared `orca` command from the official Orca app.')
     }
   }
 
@@ -1195,11 +1234,10 @@ function quotePowerShell(value: string): string {
 
 export function getBundledLauncherPath(
   platform: NodeJS.Platform,
-  resourcesPath: string,
-  commandName?: string
+  resourcesPath: string
 ): string | null {
   if (platform === 'darwin') {
-    return join(resourcesPath, 'bin', commandName ?? 'orca')
+    return join(resourcesPath, 'bin', 'orca')
   }
   if (platform === 'linux') {
     return join(resourcesPath, 'bin', LINUX_COMMAND_NAME)

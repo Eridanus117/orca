@@ -4,15 +4,15 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import {
   existsSync,
   lstatSync,
+  readlinkSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
-  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const projectDir = resolve(import.meta.dirname, '..', '..')
@@ -21,14 +21,15 @@ const distribution = JSON.parse(
 )
 const appSupportDir = join(homedir(), 'Library', 'Application Support')
 const paths = {
-  officialProfile: join(appSupportDir, 'orca'),
-  forkProfile: join(appSupportDir, distribution.userDataDirName),
+  sharedProfile: join(appSupportDir, distribution.userDataDirName),
   installedApp: join(homedir(), 'Applications', `${distribution.productName}.app`),
-  cli: join(homedir(), '.local', 'bin', distribution.cliCommand),
+  legacyForkCli: join(homedir(), '.local', 'bin', 'orca-fork'),
   state: join(appSupportDir, 'Orca Fork Installer')
 }
 
-const COMMANDS = new Set(['status', 'sync', 'migrate-profile', 'install', 'update', 'rollback'])
+const COMMANDS = new Set(['status', 'sync', 'install', 'update', 'rollback'])
+const BACKUP_SCHEMA = 'orca.local-distribution-backup/v2'
+const BACKUP_ROOT_NAME = 'shared-profile-backups'
 const TRANSIENT_PROFILE_NAMES = new Set([
   'Cache',
   'Code Cache',
@@ -83,14 +84,27 @@ function ensureMac() {
   }
 }
 
+/**
+ * Rejects work while an app or one of its bundle-hosted helpers is running.
+ *
+ * @param {string} appBundleName Visible app bundle name.
+ */
 function assertStopped(appBundleName) {
-  const needle = `/${appBundleName}.app/Contents/MacOS/${distribution.executableName}`
+  const needle = `/${appBundleName}.app/Contents/`
   const running = capture('ps', ['-axo', 'pid=,command='])
     .split('\n')
     .filter((line) => line.includes(needle))
   if (running.length > 0) {
     throw new Error(`${appBundleName} is running. Quit it before this operation.`)
   }
+}
+
+/**
+ * Ensures the shared profile has no active official or Fork process.
+ */
+function assertAllOrcaStopped() {
+  assertStopped('Orca')
+  assertStopped(distribution.productName)
 }
 
 function assertCleanCheckout() {
@@ -178,20 +192,20 @@ function resolveMacSdkRoot() {
 
 function createPairSnapshot(reason) {
   const appPresent = existsSync(paths.installedApp)
-  const profilePresent = existsSync(paths.forkProfile)
+  const profilePresent = existsSync(paths.sharedProfile)
   if (!appPresent && !profilePresent) {
     return null
   }
-  const snapshotDir = join(paths.state, 'backups', timestamp())
+  const snapshotDir = join(paths.state, BACKUP_ROOT_NAME, timestamp())
   execFileSync('mkdir', ['-p', snapshotDir])
   if (appPresent) {
     cloneDirectory(paths.installedApp, join(snapshotDir, `${distribution.productName}.app`))
   }
   if (profilePresent) {
-    cloneDirectory(paths.forkProfile, join(snapshotDir, distribution.userDataDirName))
+    cloneDirectory(paths.sharedProfile, join(snapshotDir, distribution.userDataDirName))
   }
   const manifest = {
-    schema: 'orca.local-distribution-backup/v1',
+    schema: BACKUP_SCHEMA,
     createdAt: new Date().toISOString(),
     reason,
     commit: currentCommit(),
@@ -201,6 +215,55 @@ function createPairSnapshot(reason) {
   }
   writeFileSync(join(snapshotDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   return snapshotDir
+}
+
+/**
+ * Lists abandoned transactional app directories from interrupted installs.
+ *
+ * @returns {string[]} Absolute paths safe to remove while both apps are stopped.
+ */
+function findStaleInstallArtifacts() {
+  const appDirectory = dirname(paths.installedApp)
+  if (!existsSync(appDirectory)) {
+    return []
+  }
+  const appName = basename(paths.installedApp)
+  const prefixes = [`${appName}.staging-`, `${appName}.previous-`]
+  return readdirSync(appDirectory)
+    .filter((name) => prefixes.some((prefix) => name.startsWith(prefix)))
+    .map((name) => join(appDirectory, name))
+}
+
+/**
+ * Removes abandoned app swaps only after the shared runtime is stopped.
+ */
+function cleanStaleInstallArtifacts() {
+  for (const artifact of findStaleInstallArtifacts()) {
+    rmSync(artifact, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Removes the launcher created by the retired isolated-Fork distribution.
+ */
+function cleanManagedLegacyForkCli() {
+  let stats
+  try {
+    stats = lstatSync(paths.legacyForkCli)
+  } catch {
+    return
+  }
+  if (!stats.isSymbolicLink()) {
+    console.warn(`Leaving unmanaged legacy command untouched: ${paths.legacyForkCli}`)
+    return
+  }
+  const target = resolve(dirname(paths.legacyForkCli), readlinkSync(paths.legacyForkCli))
+  const expected = join(paths.installedApp, 'Contents', 'Resources', 'bin', 'orca-fork')
+  if (target !== expected) {
+    console.warn(`Leaving unrelated legacy symlink untouched: ${paths.legacyForkCli} -> ${target}`)
+    return
+  }
+  rmSync(paths.legacyForkCli, { force: true })
 }
 
 function findBuiltApp(directory = join(projectDir, 'dist'), depth = 0) {
@@ -236,7 +299,7 @@ function validateBundle(appPath) {
   }
   for (const required of [
     join(resources, 'orca-fork-distribution.json'),
-    join(resources, 'bin', distribution.cliCommand)
+    join(resources, 'bin', 'orca')
   ]) {
     if (!existsSync(required)) {
       throw new Error(`Missing fork bundle resource: ${required}`)
@@ -292,20 +355,9 @@ function buildBundle() {
   return builtApp
 }
 
-function installCli() {
-  execFileSync('mkdir', ['-p', dirname(paths.cli)])
-  if (existsSync(paths.cli) && !lstatSync(paths.cli).isSymbolicLink()) {
-    throw new Error(`Refusing to replace non-symlink CLI: ${paths.cli}`)
-  }
-  rmSync(paths.cli, { force: true })
-  symlinkSync(
-    join(paths.installedApp, 'Contents', 'Resources', 'bin', distribution.cliCommand),
-    paths.cli
-  )
-}
-
 function installBuiltBundle(builtApp) {
-  assertStopped(distribution.productName)
+  assertAllOrcaStopped()
+  cleanStaleInstallArtifacts()
   createPairSnapshot('pre-install')
   execFileSync('mkdir', ['-p', dirname(paths.installedApp), paths.state])
   const stagingApp = `${paths.installedApp}.staging-${process.pid}`
@@ -333,7 +385,7 @@ function installBuiltBundle(builtApp) {
       renameSync(paths.installedApp, previousApp)
     }
     renameSync(stagingApp, paths.installedApp)
-    installCli()
+    cleanManagedLegacyForkCli()
     rmSync(previousApp, { recursive: true, force: true })
     rmSync(transactionPath, { force: true })
   } catch (error) {
@@ -344,41 +396,8 @@ function installBuiltBundle(builtApp) {
   }
 }
 
-function migrateProfile() {
-  assertStopped('Orca')
-  assertStopped(distribution.productName)
-  if (!existsSync(paths.officialProfile)) {
-    throw new Error(`Official Orca profile does not exist: ${paths.officialProfile}`)
-  }
-  if (existsSync(paths.forkProfile)) {
-    throw new Error(`Fork profile already exists; refusing to merge: ${paths.forkProfile}`)
-  }
-  const stagingProfile = `${paths.forkProfile}.staging-${process.pid}`
-  cloneDirectory(paths.officialProfile, stagingProfile)
-  try {
-    cleanTransientProfileState(stagingProfile)
-    writeFileSync(
-      join(stagingProfile, '.orca-fork-profile.json'),
-      `${JSON.stringify(
-        {
-          schema: 'orca.local-distribution-profile/v1',
-          migratedAt: new Date().toISOString(),
-          source: paths.officialProfile,
-          commit: currentCommit()
-        },
-        null,
-        2
-      )}\n`
-    )
-    renameSync(stagingProfile, paths.forkProfile)
-  } catch (error) {
-    rmSync(stagingProfile, { recursive: true, force: true })
-    throw error
-  }
-}
-
 function latestBackup() {
-  const backupRoot = join(paths.state, 'backups')
+  const backupRoot = join(paths.state, BACKUP_ROOT_NAME)
   if (!existsSync(backupRoot)) {
     return null
   }
@@ -420,12 +439,16 @@ function replaceFromSnapshot(source, target, present, label) {
 }
 
 function rollback() {
-  assertStopped(distribution.productName)
+  assertAllOrcaStopped()
+  cleanStaleInstallArtifacts()
   const backup = latestBackup()
   if (!backup) {
     throw new Error('No Orca Fork backup is available.')
   }
   const manifest = JSON.parse(readFileSync(join(backup, 'manifest.json'), 'utf8'))
+  if (manifest.schema !== BACKUP_SCHEMA) {
+    throw new Error(`Unsupported backup schema: ${manifest.schema ?? '<missing>'}`)
+  }
   createPairSnapshot('pre-rollback')
   replaceFromSnapshot(
     join(backup, `${distribution.productName}.app`),
@@ -435,15 +458,11 @@ function rollback() {
   )
   replaceFromSnapshot(
     join(backup, distribution.userDataDirName),
-    paths.forkProfile,
+    paths.sharedProfile,
     manifest.profilePresent,
     'profile'
   )
-  if (manifest.appPresent) {
-    installCli()
-  } else {
-    rmSync(paths.cli, { force: true })
-  }
+  cleanManagedLegacyForkCli()
 }
 
 export function parseCommand(argv) {
@@ -457,39 +476,39 @@ export function parseCommand(argv) {
 export function buildDryRunPlan(command) {
   switch (command) {
     case 'status':
-      return ['Inspect source, installed app, profile, CLI, signing, and pending transaction.']
+      return [
+        'Inspect source, installed app, shared profile, legacy CLI, signing, and pending transaction.'
+      ]
     case 'sync':
       return [
         'Fetch upstream/main.',
         'Rebase the current fork branch; abort automatically on conflict.'
       ]
-    case 'migrate-profile':
-      return [
-        'Require official Orca and Orca Fork to be stopped.',
-        `Clone ${paths.officialProfile} to ${paths.forkProfile}.`,
-        'Remove only transient locks, sockets, runtime files, logs, and caches from the target.'
-      ]
     case 'install':
       return [
+        'Require official Orca, Orca Fork, and their bundle helpers to be stopped.',
         'Locate the existing Orca Fork build under dist/.',
         'Validate bundle id, executable, resources, and code signature.',
-        'Snapshot the currently installed app and full fork profile as one rollback pair.',
-        `Atomically install ${paths.installedApp} and register ${paths.cli}.`,
+        'Snapshot the currently installed app and shared Orca profile as one rollback pair.',
+        `Atomically install ${paths.installedApp} without changing the global orca command.`,
+        'Remove abandoned staging apps and the retired managed orca-fork symlink.',
         'Do not launch the app.'
       ]
     case 'update':
       return [
+        'Require official Orca, Orca Fork, and their bundle helpers to be stopped before install.',
         'Build the current checkout with the Orca Fork identity.',
         'Validate bundle id, executable, resources, and code signature.',
-        'Snapshot the currently installed app and full fork profile as one rollback pair.',
-        `Atomically install ${paths.installedApp} and register ${paths.cli}.`,
+        'Snapshot the currently installed app and shared Orca profile as one rollback pair.',
+        `Atomically install ${paths.installedApp} without changing the global orca command.`,
+        'Remove abandoned staging apps and the retired managed orca-fork symlink.',
         'Do not launch the app.'
       ]
     case 'rollback':
       return [
-        'Require Orca Fork to be stopped.',
-        'Snapshot the current app/profile pair.',
-        'Restore the newest prior app/profile pair and clear transient runtime state.'
+        'Require official Orca, Orca Fork, and their bundle helpers to be stopped.',
+        'Snapshot the current app/shared-profile pair.',
+        'Restore the newest v2 app/shared-profile pair and clear transient runtime state.'
       ]
   }
 }
@@ -514,8 +533,11 @@ function printStatus() {
   console.log(`macOS SDK: ${resolveMacSdkRoot()}`)
   console.log(`upstream/main...HEAD: ${upstreamDelta || '<not fetched>'}`)
   console.log(`app: ${existsSync(paths.installedApp) ? paths.installedApp : '<not installed>'}`)
-  console.log(`profile: ${existsSync(paths.forkProfile) ? paths.forkProfile : '<not migrated>'}`)
-  console.log(`cli: ${existsSync(paths.cli) ? paths.cli : '<not installed>'}`)
+  console.log(
+    `shared profile: ${existsSync(paths.sharedProfile) ? paths.sharedProfile : '<missing>'}`
+  )
+  console.log(`legacy fork CLI: ${existsSync(paths.legacyForkCli) ? paths.legacyForkCli : 'none'}`)
+  console.log(`stale app transactions: ${findStaleInstallArtifacts().join(', ') || 'none'}`)
   console.log(`pending transaction: ${existsSync(transaction) ? transaction : 'none'}`)
   console.log(`signature: ${signature || '<none; local ad-hoc builds may require TCC again>'}`)
 }
@@ -545,10 +567,6 @@ export async function main(argv = process.argv.slice(2)) {
       run('git', ['rebase', '--abort'])
       throw error
     }
-    return
-  }
-  if (command === 'migrate-profile') {
-    migrateProfile()
     return
   }
   if (command === 'install' || command === 'update') {

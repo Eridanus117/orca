@@ -88,21 +88,4 @@ describe('claude agent teams shim env', () => {
 
     expect(resolveClaudeAgentTeamsShimBin({ PATH: root })).toBe(cliPath)
   })
-
-  it('prefers the runtime-scoped Fork CLI over official Orca fallbacks', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'orca-agent-teams-fork-cli-'))
-    roots.push(root)
-    const cliPath = join(root, 'orca-fork')
-    await writeFile(cliPath, '#!/usr/bin/env sh\n', 'utf8')
-    if (process.platform !== 'win32') {
-      await chmod(cliPath, 0o755)
-    }
-
-    expect(
-      resolveClaudeAgentTeamsShimBin({
-        PATH: root,
-        ORCA_CLI_COMMAND: 'orca-fork'
-      })
-    ).toBe(cliPath)
-  })
 })

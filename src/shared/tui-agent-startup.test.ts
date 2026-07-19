@@ -450,7 +450,6 @@ describe('tui agent startup plans', () => {
   })
 
   it('uses the Linux Orca CLI command for Claude Agent Teams launches', () => {
-    expect(TUI_AGENT_CONFIG['claude-agent-teams'].detectCmdAliases).toContain('orca-fork')
     const plan = buildAgentStartupPlan({
       agent: 'claude-agent-teams',
       prompt: '',

@@ -26,6 +26,10 @@ export async function ensureOrcaCliAvailableForAgentSkillTerminal({
     const status = await window.api.cli.getInstallStatus()
     onStatusChange?.(status)
 
+    if (isOrcaCliAvailableOnPath(status)) {
+      return status
+    }
+
     if (!status.supported) {
       showCliPrerequisiteWarning(status)
       return status

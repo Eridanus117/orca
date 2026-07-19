@@ -44,10 +44,10 @@ async function makeFixture(): Promise<{
   return { root, userDataPath, appPath }
 }
 
-async function createPackagedMacLauncher(root: string, commandName = 'orca'): Promise<string> {
+async function createPackagedMacLauncher(root: string): Promise<string> {
   const resourcesPath = join(root, 'resources')
   await mkdir(join(resourcesPath, 'bin'), { recursive: true })
-  await writeFile(join(resourcesPath, 'bin', commandName), '#!/usr/bin/env bash\necho orca\n', {
+  await writeFile(join(resourcesPath, 'bin', 'orca'), '#!/usr/bin/env bash\necho orca\n', {
     encoding: 'utf8',
     mode: 0o755
   })
@@ -65,12 +65,25 @@ describe('CliInstaller', () => {
   })
 
   it.skipIf(process.platform === 'win32')(
-    'registers the packaged fork under a user-scoped command without touching orca',
+    'recognizes the official shared command but refuses to mutate it from the Fork',
     async () => {
       const fixture = await makeFixture()
       const homePath = join(fixture.root, 'home')
-      const resourcesPath = await createPackagedMacLauncher(fixture.root, 'orca-fork')
+      const resourcesPath = await createPackagedMacLauncher(fixture.root)
       const commandDir = join(homePath, '.local', 'bin')
+      const officialLauncher = join(
+        fixture.root,
+        'Applications',
+        'Orca.app',
+        'Contents',
+        'Resources',
+        'bin',
+        'orca'
+      )
+      await mkdir(dirname(officialLauncher), { recursive: true })
+      await writeFile(officialLauncher, '#!/usr/bin/env bash\n', { mode: 0o755 })
+      await mkdir(commandDir, { recursive: true })
+      await symlink(officialLauncher, join(commandDir, 'orca'))
       const installer = new CliInstaller({
         platform: 'darwin',
         isPackaged: true,
@@ -78,23 +91,26 @@ describe('CliInstaller', () => {
         homePath,
         processPathEnv: commandDir,
         localForkDistribution: {
-          schema: 'orca.local-distribution/v1',
+          schema: 'orca.local-distribution/v2',
           kind: 'local-fork',
           appId: 'com.eridanus117.orca-fork',
           productName: 'Orca Fork',
-          userDataDirName: 'orca-fork',
-          cliCommand: 'orca-fork',
+          userDataDirName: 'orca',
           executableName: 'Orca'
         }
       })
 
-      const installed = await installer.install()
-      expect(installed).toMatchObject({
-        commandName: 'orca-fork',
-        commandPath: join(commandDir, 'orca-fork'),
-        launcherPath: join(resourcesPath, 'bin', 'orca-fork'),
-        state: 'installed'
+      await expect(installer.getStatus()).resolves.toMatchObject({
+        commandName: 'orca',
+        commandPath: join(commandDir, 'orca'),
+        currentTarget: officialLauncher,
+        pathConfigured: true,
+        state: 'installed',
+        supported: false,
+        unsupportedReason: 'shared_distribution'
       })
+      await expect(installer.install()).rejects.toThrow('official Orca app')
+      await expect(installer.remove()).rejects.toThrow('official Orca app')
     }
   )
 

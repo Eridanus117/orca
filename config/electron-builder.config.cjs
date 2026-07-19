@@ -280,8 +280,8 @@ module.exports = {
       ...commonExtraResources,
       macSpeechNativeResource,
       {
-        from: isLocalForkBuild ? 'resources/darwin/bin/orca-fork' : 'resources/darwin/bin/orca',
-        to: isLocalForkBuild ? 'bin/orca-fork' : 'bin/orca'
+        from: 'resources/darwin/bin/orca',
+        to: 'bin/orca'
       },
       {
         from: 'node_modules/agent-browser/bin/agent-browser-darwin-${arch}',
@@ -426,7 +426,7 @@ function chmodUnixCliLaunchers(resourcesDir, electronPlatformName) {
   if (electronPlatformName === 'win32') {
     return
   }
-  for (const launcherName of ['orca', 'orca-ide', 'orca-fork']) {
+  for (const launcherName of ['orca', 'orca-ide']) {
     const launcherPath = join(resourcesDir, 'bin', launcherName)
     if (!existsSync(launcherPath)) {
       continue

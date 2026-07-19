@@ -57,10 +57,6 @@ export function resolveClaudeAgentTeamsShimBin(
   if (env.ORCA_AGENT_TEAMS_SHIM_BIN) {
     return env.ORCA_AGENT_TEAMS_SHIM_BIN
   }
-  const runtimeCli = resolveRuntimeCliCommand(env)
-  if (runtimeCli) {
-    return runtimeCli
-  }
   const bundled = bundledLauncherPath()
   if (bundled && isExecutableFile(bundled)) {
     return bundled
@@ -70,26 +66,6 @@ export function resolveClaudeAgentTeamsShimBin(
     findExecutableOnPath(getOrcaCliCommandNameForPlatform(process.platform), env.PATH) ??
     getOrcaCliCommandNameForPlatform(process.platform)
   )
-}
-
-/**
- * Resolves the runtime-scoped CLI advertised to managed PTYs.
- *
- * @param env PTY environment containing the command and PATH.
- * @returns An executable path when the advertised command is available.
- */
-function resolveRuntimeCliCommand(env: Record<string, string | undefined>): string | null {
-  const command = env.ORCA_CLI_COMMAND?.trim()
-  if (!command || !/^[A-Za-z0-9._-]+$/.test(command)) {
-    return null
-  }
-  if (process.resourcesPath) {
-    const bundled = join(process.resourcesPath, 'bin', command)
-    if (isExecutableFile(bundled)) {
-      return bundled
-    }
-  }
-  return findExecutableOnPath(command, env.PATH)
 }
 
 function defaultShimRoot(): string {

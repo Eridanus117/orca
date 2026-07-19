@@ -16,9 +16,22 @@ describe('orca-fork-macos', () => {
   })
 
   it('can install a validated existing build without rebuilding it', () => {
-    expect(buildDryRunPlan('install')[0]).toBe('Locate the existing Orca Fork build under dist/.')
-    expect(buildDryRunPlan('update')[0]).toBe(
+    expect(buildDryRunPlan('install')).toEqual(
+      expect.arrayContaining([
+        'Locate the existing Orca Fork build under dist/.',
+        'Snapshot the currently installed app and shared Orca profile as one rollback pair.',
+        'Do not launch the app.'
+      ])
+    )
+    expect(buildDryRunPlan('update')[1]).toBe(
       'Build the current checkout with the Orca Fork identity.'
+    )
+  })
+
+  it('removes the obsolete profile migration command and keeps rollback on v2 backups', () => {
+    expect(() => parseCommand(['migrate-profile'])).toThrow('Unknown command')
+    expect(buildDryRunPlan('rollback')).toContain(
+      'Restore the newest v2 app/shared-profile pair and clear transient runtime state.'
     )
   })
 })

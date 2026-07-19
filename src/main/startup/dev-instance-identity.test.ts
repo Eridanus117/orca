@@ -18,12 +18,11 @@ describe('dev-instance-identity', () => {
         false,
         {},
         {
-          schema: 'orca.local-distribution/v1',
+          schema: 'orca.local-distribution/v2',
           kind: 'local-fork',
           appId: 'com.eridanus117.orca-fork',
           productName: 'Orca Fork',
-          userDataDirName: 'orca-fork',
-          cliCommand: 'orca-fork',
+          userDataDirName: 'orca',
           executableName: 'Orca'
         }
       )
