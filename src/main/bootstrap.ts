@@ -13,6 +13,5 @@ if (localForkDistribution) {
   delete process.env.ORCA_BYPASS_SINGLE_INSTANCE_LOCK
 }
 
-// Why: both app bundles intentionally share one profile and its single-instance
-// lock; the path must be fixed before any main module resolves app storage.
-void import('./index')
+// Why: this module is the first side-effect import of the main entry so the
+// shared profile is fixed before any other main module resolves app storage.
