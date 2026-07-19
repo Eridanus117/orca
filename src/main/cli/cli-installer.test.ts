@@ -44,10 +44,10 @@ async function makeFixture(): Promise<{
   return { root, userDataPath, appPath }
 }
 
-async function createPackagedMacLauncher(root: string): Promise<string> {
+async function createPackagedMacLauncher(root: string, commandName = 'orca'): Promise<string> {
   const resourcesPath = join(root, 'resources')
   await mkdir(join(resourcesPath, 'bin'), { recursive: true })
-  await writeFile(join(resourcesPath, 'bin', 'orca'), '#!/usr/bin/env bash\necho orca\n', {
+  await writeFile(join(resourcesPath, 'bin', commandName), '#!/usr/bin/env bash\necho orca\n', {
     encoding: 'utf8',
     mode: 0o755
   })
@@ -63,6 +63,40 @@ describe('CliInstaller', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'registers the packaged fork under a user-scoped command without touching orca',
+    async () => {
+      const fixture = await makeFixture()
+      const homePath = join(fixture.root, 'home')
+      const resourcesPath = await createPackagedMacLauncher(fixture.root, 'orca-fork')
+      const commandDir = join(homePath, '.local', 'bin')
+      const installer = new CliInstaller({
+        platform: 'darwin',
+        isPackaged: true,
+        resourcesPath,
+        homePath,
+        processPathEnv: commandDir,
+        localForkDistribution: {
+          schema: 'orca.local-distribution/v1',
+          kind: 'local-fork',
+          appId: 'com.eridanus117.orca-fork',
+          productName: 'Orca Fork',
+          userDataDirName: 'orca-fork',
+          cliCommand: 'orca-fork',
+          executableName: 'Orca'
+        }
+      })
+
+      const installed = await installer.install()
+      expect(installed).toMatchObject({
+        commandName: 'orca-fork',
+        commandPath: join(commandDir, 'orca-fork'),
+        launcherPath: join(resourcesPath, 'bin', 'orca-fork'),
+        state: 'installed'
+      })
+    }
+  )
 
   // Why: this test creates Unix symlinks and shell scripts that only apply on macOS.
   it.skipIf(process.platform === 'win32')(

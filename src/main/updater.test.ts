@@ -8,7 +8,8 @@ const {
   autoUpdaterMock,
   isMock,
   killAllPtyMock,
-  powerMonitorOnMock
+  powerMonitorOnMock,
+  isLocalForkDistributionMock
 } = vi.hoisted(() => {
   const appEventHandlers = new Map<string, ((...args: unknown[]) => void)[]>()
   const eventHandlers = new Map<string, ((...args: unknown[]) => void)[]>()
@@ -84,7 +85,8 @@ const {
     autoUpdaterMock,
     isMock: { dev: false },
     killAllPtyMock: vi.fn(),
-    powerMonitorOnMock: vi.fn()
+    powerMonitorOnMock: vi.fn(),
+    isLocalForkDistributionMock: vi.fn()
   }
 })
 
@@ -110,6 +112,10 @@ vi.mock('@electron-toolkit/utils', () => ({
 
 vi.mock('./ipc/pty', () => ({
   killAllPty: killAllPtyMock
+}))
+
+vi.mock('./startup/local-fork-distribution', () => ({
+  isLocalForkDistribution: isLocalForkDistributionMock
 }))
 
 const { fetchChangelogMock } = vi.hoisted(() => ({
@@ -171,6 +177,7 @@ describe('updater', () => {
     armExitWatchdogMock.mockReset()
     disarmExitWatchdogMock.mockReset()
     powerMonitorOnMock.mockReset()
+    isLocalForkDistributionMock.mockReset().mockReturnValue(false)
     fetchNudgeMock.mockReset().mockResolvedValue(null)
     shouldApplyNudgeMock.mockReset().mockReturnValue(false)
     fetchChangelogMock.mockReset().mockResolvedValue(null)
@@ -192,6 +199,24 @@ describe('updater', () => {
     expect(autoUpdaterMock.updateConfigPath).toBeUndefined()
     expect(autoUpdaterMock.setFeedURL).not.toHaveBeenCalled()
     expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled()
+    expect(powerMonitorOnMock).not.toHaveBeenCalled()
+  })
+
+  it('never loads or configures the official updater for Orca Fork', async () => {
+    isLocalForkDistributionMock.mockReturnValue(true)
+    const mainWindow = { webContents: { send: vi.fn() } }
+    const { setupAutoUpdater, checkForUpdatesFromMenu, downloadUpdate, quitAndInstall } =
+      await import('./updater')
+
+    setupAutoUpdater(mainWindow as never)
+    checkForUpdatesFromMenu()
+    downloadUpdate()
+    quitAndInstall()
+
+    expect(autoUpdaterMock.setFeedURL).not.toHaveBeenCalled()
+    expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled()
+    expect(autoUpdaterMock.downloadUpdate).not.toHaveBeenCalled()
+    expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled()
     expect(powerMonitorOnMock).not.toHaveBeenCalled()
   })
 

@@ -18,6 +18,10 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { promisify } from 'node:util'
 import type { CliInstallMethod, CliInstallStatus } from '../../shared/cli-install-types'
 import { buildAppImageCliWrapper } from './appimage-cli-wrapper'
+import {
+  getLocalForkDistribution,
+  type LocalForkDistribution
+} from '../startup/local-fork-distribution'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_MAC_COMMAND_PATH = '/usr/local/bin/orca'
@@ -45,6 +49,7 @@ type CliInstallerOptions = {
   userPathWriter?: (value: string) => Promise<void>
   /** Why: AppImage reports a stable outer file path via $APPIMAGE while bundled resources live in an ephemeral FUSE mount. */
   appImagePath?: string | null
+  localForkDistribution?: LocalForkDistribution | null
 }
 
 type InstallSpec = {
@@ -68,8 +73,12 @@ export class CliInstaller {
   private readonly userPathReader: () => Promise<string | null>
   private readonly userPathWriter: (value: string) => Promise<void>
   private readonly appImagePath: string | null
+  private readonly localForkDistribution: LocalForkDistribution | null
 
   private get commandName(): string {
+    if (this.localForkDistribution) {
+      return this.localForkDistribution.cliCommand
+    }
     if (!this.isPackaged && !this.commandPathOverride) {
       // Why: development builds must not claim the production shell command.
       return DEV_COMMAND_NAME
@@ -93,6 +102,10 @@ export class CliInstaller {
     this.processPathEnv = options.processPathEnv ?? process.env.PATH ?? process.env.Path ?? null
     this.commandPathOverride =
       options.commandPathOverride ?? process.env.ORCA_CLI_INSTALL_PATH ?? null
+    this.localForkDistribution =
+      options.localForkDistribution === undefined
+        ? getLocalForkDistribution()
+        : options.localForkDistribution
     // Why: resolved once at construction — existsSync must not run on every
     // getStatus() call (hot path). /usr/local/bin is absent by default on Apple
     // Silicon Macs (Homebrew moved to /opt/homebrew); fall back to ~/.local/bin
@@ -101,9 +114,11 @@ export class CliInstaller {
     // defaultMacCommandPath is a test seam: it feeds into the existence check
     // so tests can simulate arm64 without relying on the real /usr/local/bin.
     const candidateMacPath = options.defaultMacCommandPath ?? DEFAULT_MAC_COMMAND_PATH
-    this.macCommandPath = existsSync(dirname(candidateMacPath))
-      ? candidateMacPath
-      : join(this.homePath, '.local', 'bin', 'orca')
+    this.macCommandPath = this.localForkDistribution
+      ? join(this.homePath, '.local', 'bin', this.localForkDistribution.cliCommand)
+      : existsSync(dirname(candidateMacPath))
+        ? candidateMacPath
+        : join(this.homePath, '.local', 'bin', 'orca')
     this.privilegedRunner = options.privilegedRunner ?? runMacPrivilegedCommand
     this.userPathReader = options.userPathReader ?? (() => readWindowsUserPath())
     this.userPathWriter = options.userPathWriter ?? ((value) => writeWindowsUserPath(value))
@@ -358,7 +373,7 @@ export class CliInstaller {
     if (this.platform === 'win32') {
       // Why: NSIS /D installs can live outside LOCALAPPDATA. The packaged
       // resources directory is the authoritative native launcher location.
-      return getBundledLauncherPath(this.platform, this.resourcesPath)
+      return getBundledLauncherPath(this.platform, this.resourcesPath, this.commandName)
     }
 
     return null
@@ -374,7 +389,11 @@ export class CliInstaller {
     }
 
     if (this.isPackaged) {
-      const bundledPath = getBundledLauncherPath(this.platform, this.resourcesPath)
+      const bundledPath = getBundledLauncherPath(
+        this.platform,
+        this.resourcesPath,
+        this.commandName
+      )
       return bundledPath && existsSync(bundledPath) ? bundledPath : null
     }
 
@@ -1176,10 +1195,11 @@ function quotePowerShell(value: string): string {
 
 export function getBundledLauncherPath(
   platform: NodeJS.Platform,
-  resourcesPath: string
+  resourcesPath: string,
+  commandName?: string
 ): string | null {
   if (platform === 'darwin') {
-    return join(resourcesPath, 'bin', 'orca')
+    return join(resourcesPath, 'bin', commandName ?? 'orca')
   }
   if (platform === 'linux') {
     return join(resourcesPath, 'bin', LINUX_COMMAND_NAME)

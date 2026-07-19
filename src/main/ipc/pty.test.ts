@@ -1772,6 +1772,15 @@ describe('registerPtyHandlers', () => {
         }
       })
 
+      it('pins packaged fork terminals to the fork profile and CLI', async () => {
+        const env = await daemonSpawnAndGetEnv({}, undefined, undefined, {
+          ORCA_LOCAL_FORK_CLI_COMMAND: 'orca-fork'
+        })
+
+        expect(env.ORCA_USER_DATA_PATH).toBe('/tmp/orca-user-data')
+        expect(env.ORCA_CLI_COMMAND).toBe('orca-fork')
+      })
+
       it('injects the agent-hook receiver env on the daemon path', async () => {
         const env = await daemonSpawnAndGetEnv({})
         expect(env.ORCA_AGENT_HOOK_PORT).toBe('5678')

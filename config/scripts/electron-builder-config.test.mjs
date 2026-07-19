@@ -144,6 +144,55 @@ describe('electron-builder config', () => {
     }
   })
 
+  it('keeps the official defaults and emits an isolated local fork bundle on demand', () => {
+    expect(electronBuilderConfig).toMatchObject({
+      appId: 'com.stablyai.orca',
+      productName: 'Orca'
+    })
+    expect(electronBuilderConfig.publish).toMatchObject({
+      owner: 'stablyai',
+      repo: 'orca'
+    })
+
+    const configPath = require.resolve('../electron-builder.config.cjs')
+    const original = process.env.ORCA_LOCAL_FORK_BUILD
+    try {
+      delete require.cache[configPath]
+      process.env.ORCA_LOCAL_FORK_BUILD = '1'
+      const localConfig = require('../electron-builder.config.cjs')
+      expect(localConfig).toMatchObject({
+        appId: 'com.eridanus117.orca-fork',
+        productName: 'Orca Fork',
+        executableName: 'Orca'
+      })
+      expect(localConfig.publish).toBeUndefined()
+      expect(localConfig.mac.extendInfo).toMatchObject({
+        CFBundleName: 'Orca Fork',
+        CFBundleDisplayName: 'Orca Fork'
+      })
+      expect(localConfig.mac.extraResources).toEqual(
+        expect.arrayContaining([
+          {
+            from: 'resources/distribution/orca-fork.json',
+            to: 'orca-fork-distribution.json'
+          },
+          {
+            from: 'resources/darwin/bin/orca-fork',
+            to: 'bin/orca-fork'
+          }
+        ])
+      )
+    } finally {
+      if (original === undefined) {
+        delete process.env.ORCA_LOCAL_FORK_BUILD
+      } else {
+        process.env.ORCA_LOCAL_FORK_BUILD = original
+      }
+      delete require.cache[configPath]
+      require('../electron-builder.config.cjs')
+    }
+  })
+
   it('uses Orca native rebuild hook instead of electron-builder default rebuild', () => {
     expect(electronBuilderConfig.beforeBuild).toBe(electronBuilderNativeRebuild)
     expect(electronBuilderConfig.npmRebuild).toBe(true)

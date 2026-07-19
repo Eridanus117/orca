@@ -3,12 +3,34 @@ import { getDevInstanceIdentity } from './dev-instance-identity'
 
 describe('dev-instance-identity', () => {
   it('keeps packaged identity stable', () => {
-    expect(getDevInstanceIdentity(false, {})).toMatchObject({
+    expect(getDevInstanceIdentity(false, {}, null)).toMatchObject({
       name: 'Orca',
       isDev: false,
       devLabel: null,
       dockBadgeLabel: null,
       appUserModelId: 'com.stablyai.orca'
+    })
+  })
+
+  it('uses the independent packaged identity for Orca Fork', () => {
+    expect(
+      getDevInstanceIdentity(
+        false,
+        {},
+        {
+          schema: 'orca.local-distribution/v1',
+          kind: 'local-fork',
+          appId: 'com.eridanus117.orca-fork',
+          productName: 'Orca Fork',
+          userDataDirName: 'orca-fork',
+          cliCommand: 'orca-fork',
+          executableName: 'Orca'
+        }
+      )
+    ).toMatchObject({
+      name: 'Orca Fork',
+      isDev: false,
+      appUserModelId: 'com.eridanus117.orca-fork'
     })
   })
 
