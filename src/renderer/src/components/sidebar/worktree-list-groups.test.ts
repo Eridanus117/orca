@@ -27,8 +27,10 @@ import type {
   Repo,
   ProjectGroup,
   Worktree,
-  WorktreeLineage
+  WorktreeLineage,
+  WorkspaceLineage
 } from '../../../../shared/types'
+import { folderWorkspaceKey, worktreeWorkspaceKey } from '../../../../shared/workspace-scope'
 
 const LOCAL_HOST_LABEL = getExecutionHostLabel('local')
 
@@ -3025,6 +3027,144 @@ describe('project groups', () => {
         groupDepth: 1
       }
     ])
+  })
+
+  it('projects attached cross-repo worktrees below a folder workspace without repo duplicates', () => {
+    const group: ProjectGroup = {
+      id: 'group-logistics',
+      name: 'Logistics',
+      parentPath: '/workspace/logistics',
+      parentGroupId: null,
+      createdFrom: 'folder-scan',
+      tabOrder: 0,
+      isCollapsed: false,
+      color: null,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const folderWorkspace: FolderWorkspace = {
+      id: 'folder-freight-45',
+      projectGroupId: group.id,
+      name: 'FREIGHT-45 · three repos',
+      folderPath: '/workspace/logistics/FREIGHT-45',
+      linkedTask: null,
+      comment: '',
+      isArchived: false,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 10,
+      lastActivityAt: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const centerRepo: Repo = {
+      ...repo,
+      id: 'repo-center',
+      displayName: 'cnortools-center',
+      projectGroupId: group.id
+    }
+    const sharedRepo: Repo = {
+      ...repo,
+      id: 'repo-shared',
+      displayName: 'carriageshared',
+      projectGroupId: group.id
+    }
+    const root = {
+      ...worktree,
+      id: 'wt-center',
+      instanceId: 'instance-center',
+      repoId: centerRepo.id,
+      displayName: 'FREIGHT-45 · center'
+    }
+    const child = {
+      ...worktree,
+      id: 'wt-shared',
+      instanceId: 'instance-shared',
+      repoId: sharedRepo.id,
+      displayName: 'FREIGHT-45 · shared'
+    }
+    const unrelated = {
+      ...worktree,
+      id: 'wt-unrelated',
+      repoId: centerRepo.id,
+      displayName: 'Unrelated'
+    }
+    const lineage: WorktreeLineage = {
+      worktreeId: child.id,
+      worktreeInstanceId: child.instanceId,
+      parentWorktreeId: root.id,
+      parentWorktreeInstanceId: root.instanceId,
+      origin: 'cli',
+      capture: { source: 'env-workspace', confidence: 'inferred' },
+      createdAt: 1
+    }
+    const workspaceLineage: WorkspaceLineage = {
+      childWorkspaceKey: worktreeWorkspaceKey(root.id),
+      childInstanceId: root.instanceId,
+      parentWorkspaceKey: folderWorkspaceKey(folderWorkspace.id),
+      parentInstanceId: null,
+      origin: 'cli',
+      capture: { source: 'env-workspace', confidence: 'inferred' },
+      createdAt: 1
+    }
+    const worktreeMap = new Map(
+      [root, child, unrelated].map((candidate) => [candidate.id, candidate])
+    )
+
+    const rows = buildRows(
+      'repo',
+      [root, child, unrelated],
+      new Map([
+        [centerRepo.id, centerRepo],
+        [sharedRepo.id, sharedRepo]
+      ]),
+      null,
+      new Set(),
+      undefined,
+      undefined,
+      undefined,
+      { [child.id]: lineage },
+      worktreeMap,
+      true,
+      undefined,
+      [group],
+      new Set([centerRepo.id, sharedRepo.id]),
+      new Map(),
+      new Map(),
+      [],
+      undefined,
+      [folderWorkspace],
+      undefined,
+      undefined,
+      undefined,
+      { [workspaceLineage.childWorkspaceKey]: workspaceLineage }
+    )
+
+    const itemRows = rows.filter((row) => row.type === 'item')
+    expect(itemRows).toMatchObject([
+      {
+        worktree: { id: root.id },
+        repo: { id: centerRepo.id },
+        sectionKey: `folder-workspace:${folderWorkspace.id}`,
+        folderWorkspaceId: folderWorkspace.id,
+        depth: 0,
+        groupDepth: 2
+      },
+      {
+        worktree: { id: child.id },
+        repo: { id: sharedRepo.id },
+        sectionKey: `folder-workspace:${folderWorkspace.id}`,
+        folderWorkspaceId: folderWorkspace.id,
+        depth: 1,
+        groupDepth: 2
+      },
+      {
+        worktree: { id: unrelated.id },
+        sectionKey: `repo:${centerRepo.id}`
+      }
+    ])
+    expect(itemRows.filter((row) => row.worktree.id === root.id)).toHaveLength(1)
+    expect(itemRows.filter((row) => row.worktree.id === child.id)).toHaveLength(1)
   })
 
   it('preserves nested Project Group depth for folder workspace rows', () => {

@@ -117,6 +117,25 @@ describe('imported worktree virtual rows', () => {
     expect(groupKeyByRowKey.get('all:main')).toBe('all')
   })
 
+  it('keeps folder workspace projection rows out of reorder drag groups', () => {
+    const projectedRow = {
+      ...makeWorktreeRow('attached'),
+      rowKey: 'folder-workspace:folder-1:attached',
+      sectionKey: 'folder-workspace:folder-1',
+      folderWorkspaceId: 'folder-1'
+    }
+    const rows = [
+      makeHeaderRow('project-group:group-1'),
+      projectedRow,
+      makeHeaderRow('repo:repo-1'),
+      makeWorktreeRow('regular')
+    ]
+    const { groupKeyByRowKey } = getWorktreeDragIndexes(rows)
+
+    expect(getWorktreeDragGroups(rows)).toEqual([{ key: 'repo:repo-1', worktreeIds: ['regular'] }])
+    expect(groupKeyByRowKey.has(projectedRow.rowKey)).toBe(false)
+  })
+
   it('only allows keep-hidden actions for repo-group cards that are not forced visible', () => {
     expect(canKeepImportedWorktreesHidden(makeImportedCardRow(), undefined)).toBe(true)
     expect(

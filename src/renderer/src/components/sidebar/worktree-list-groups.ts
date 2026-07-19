@@ -11,8 +11,10 @@ import type {
   ProjectOrderBy,
   Worktree,
   WorktreeLineage,
+  WorkspaceLineage,
   WorkspaceStatusDefinition
 } from '../../../../shared/types'
+import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import { branchName } from '../../lib/git-utils'
 import {
   getWorkspaceStatus,
@@ -85,6 +87,7 @@ export type WorktreeRow = {
   lineageGroupKey?: string
   lineageCollapsed?: boolean
   hostContextLabel?: string
+  folderWorkspaceId?: string
 }
 
 export type ImportedWorktreesCardCandidate = {
@@ -572,6 +575,7 @@ function buildWorktreeRow(
     lineageChildCount: number
     lineageCollapsed: boolean
     hostContextLabel?: string
+    folderWorkspaceId?: string
   }
 ): WorktreeRow {
   return {
@@ -586,6 +590,7 @@ function buildWorktreeRow(
     isLastLineageChild: options.isLastLineageChild,
     lineageChildCount: options.lineageChildCount,
     ...(options.hostContextLabel ? { hostContextLabel: options.hostContextLabel } : {}),
+    ...(options.folderWorkspaceId ? { folderWorkspaceId: options.folderWorkspaceId } : {}),
     ...(options.lineageChildCount > 0 ? { lineageGroupKey: getLineageGroupKey(worktree.id) } : {}),
     ...(options.lineageChildCount > 0 ? { lineageCollapsed: options.lineageCollapsed } : {})
   }
@@ -603,9 +608,17 @@ function appendWorktreeRows(
     groupDepth: number
     sectionKey: string
     hostContextLabelByRepoId?: ReadonlyMap<string, string>
+    folderWorkspaceId?: string
   }
 ): void {
-  const { nestLineage, collapsedGroups, groupDepth, sectionKey, hostContextLabelByRepoId } = options
+  const {
+    nestLineage,
+    collapsedGroups,
+    groupDepth,
+    sectionKey,
+    hostContextLabelByRepoId,
+    folderWorkspaceId
+  } = options
   if (!nestLineage) {
     for (const worktree of worktrees) {
       result.push(
@@ -618,7 +631,8 @@ function appendWorktreeRows(
           isLastLineageChild: false,
           lineageChildCount: 0,
           lineageCollapsed: false,
-          hostContextLabel: hostContextLabelByRepoId?.get(worktree.repoId)
+          hostContextLabel: hostContextLabelByRepoId?.get(worktree.repoId),
+          folderWorkspaceId
         })
       )
     }
@@ -663,7 +677,8 @@ function appendWorktreeRows(
         isLastLineageChild: isLastChild,
         lineageChildCount: children.length,
         lineageCollapsed,
-        hostContextLabel: hostContextLabelByRepoId?.get(worktree.repoId)
+        hostContextLabel: hostContextLabelByRepoId?.get(worktree.repoId),
+        folderWorkspaceId
       })
     )
     if (lineageCollapsed) {
@@ -692,6 +707,58 @@ function appendWorktreeRows(
       }
     }
   }
+}
+
+function getFolderWorkspaceAttachedWorktrees(args: {
+  folderWorkspaceId: string
+  workspaceLineageByChildKey: Readonly<Record<string, WorkspaceLineage>>
+  worktreeLineageById: Readonly<Record<string, WorktreeLineage>>
+  worktrees: readonly Worktree[]
+}): Worktree[] {
+  const worktreeById = new Map(args.worktrees.map((worktree) => [worktree.id, worktree]))
+  const includedIds = new Set<string>()
+  const parentWorkspaceKey = folderWorkspaceKey(args.folderWorkspaceId)
+
+  for (const lineage of Object.values(args.workspaceLineageByChildKey)) {
+    if (lineage.parentWorkspaceKey !== parentWorkspaceKey) {
+      continue
+    }
+    const childScope = parseWorkspaceKey(lineage.childWorkspaceKey)
+    const child =
+      childScope?.type === 'worktree' ? worktreeById.get(childScope.worktreeId) : undefined
+    if (
+      child &&
+      !child.isArchived &&
+      (!lineage.childInstanceId || lineage.childInstanceId === child.instanceId)
+    ) {
+      includedIds.add(child.id)
+    }
+  }
+
+  let added = true
+  while (added) {
+    added = false
+    for (const lineage of Object.values(args.worktreeLineageById)) {
+      if (includedIds.has(lineage.worktreeId) || !includedIds.has(lineage.parentWorktreeId)) {
+        continue
+      }
+      const parent = worktreeById.get(lineage.parentWorktreeId)
+      const child = worktreeById.get(lineage.worktreeId)
+      if (
+        parent &&
+        child &&
+        !parent.isArchived &&
+        !child.isArchived &&
+        parent.instanceId === lineage.parentWorktreeInstanceId &&
+        child.instanceId === lineage.worktreeInstanceId
+      ) {
+        includedIds.add(child.id)
+        added = true
+      }
+    }
+  }
+
+  return args.worktrees.filter((worktree) => includedIds.has(worktree.id))
 }
 
 function getRepoHostLabel(
@@ -995,10 +1062,12 @@ export function buildRows(
   folderWorkspaces: readonly FolderWorkspace[] = [],
   hostLabelById?: ReadonlyMap<string, string>,
   defaultHostId: ExecutionHostId = LOCAL_EXECUTION_HOST_ID,
-  pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy = getPinnedWorktreeDisplayPolicy(settings)
+  pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy = getPinnedWorktreeDisplayPolicy(settings),
+  workspaceLineageByChildKey: Readonly<Record<string, WorkspaceLineage>> = {}
 ): Row[] {
   const result: Row[] = []
   const projectIndex = buildProjectGroupingIndex(projectGrouping)
+  const projectGroupsById = new Map(projectGroups.map((group) => [group.id, group]))
 
   const pendingByRepo = new Map<string, PendingCreationRef[]>()
   for (const creation of pendingCreations) {
@@ -1016,10 +1085,36 @@ export function buildRows(
     }
   }
 
-  const naturalWorktrees =
+  const naturalCandidates =
     pinnedDisplayPolicy === 'duplicate-in-groups'
       ? worktrees
       : worktrees.filter((worktree) => !worktree.isPinned)
+  const folderAttachmentsById = new Map<string, Worktree[]>()
+  const folderAttachmentIds = new Set<string>()
+  if (groupBy === 'repo' && projectGroups.length > 0) {
+    for (const folderWorkspace of folderWorkspaces) {
+      if (!projectGroupsById.get(folderWorkspace.projectGroupId)?.parentPath) {
+        continue
+      }
+      const attachedWorktrees = getFolderWorkspaceAttachedWorktrees({
+        folderWorkspaceId: folderWorkspace.id,
+        workspaceLineageByChildKey,
+        worktreeLineageById: lineageById,
+        worktrees: naturalCandidates
+      })
+      if (attachedWorktrees.length === 0) {
+        continue
+      }
+      folderAttachmentsById.set(folderWorkspace.id, attachedWorktrees)
+      for (const attachedWorktree of attachedWorktrees) {
+        folderAttachmentIds.add(attachedWorktree.id)
+      }
+    }
+  }
+  // Why: the folder section is the canonical location for attached worktrees in Projects view.
+  const naturalWorktrees = naturalCandidates.filter(
+    (worktree) => !folderAttachmentIds.has(worktree.id)
+  )
   const renderedNaturalAnchorRepoIds = getRenderedNaturalAnchorRepoIds({
     groupBy,
     worktrees: naturalWorktrees,
@@ -1349,7 +1444,6 @@ export function buildRows(
     })
   }
 
-  const projectGroupsById = new Map(projectGroups.map((group) => [group.id, group]))
   const folderWorkspacesByProjectGroupId = new Map<string, FolderWorkspace[]>()
   for (const workspace of folderWorkspaces) {
     const group = projectGroupsById.get(workspace.projectGroupId)
@@ -1407,14 +1501,38 @@ export function buildRows(
     })
     if (!collapsedGroups.has(key)) {
       for (const folderWorkspace of folderWorkspacesByProjectGroupId.get(projectGroup.id) ?? []) {
+        const sectionKey = `folder-workspace:${folderWorkspace.id}`
         result.push({
           type: 'folder-workspace',
-          key: `folder-workspace:${folderWorkspace.id}`,
+          key: sectionKey,
           folderWorkspace,
           projectGroup,
           depth: 0,
           groupDepth: depth + 1
         })
+        const attachedWorktrees = folderAttachmentsById.get(folderWorkspace.id) ?? []
+        if (attachedWorktrees.length > 0) {
+          const hostContextLabelByRepoId = new Map<string, string>()
+          for (const attachedWorktree of attachedWorktrees) {
+            const label = getRepoHostLabel(
+              attachedWorktree.repoId,
+              repoMap,
+              projectIndex,
+              hostLabelById
+            )
+            if (label) {
+              hostContextLabelByRepoId.set(attachedWorktree.repoId, label)
+            }
+          }
+          appendWorktreeRows(result, attachedWorktrees, repoMap, lineageById, worktreeMap, {
+            nestLineage,
+            collapsedGroups,
+            groupDepth: depth + 2,
+            sectionKey,
+            hostContextLabelByRepoId,
+            folderWorkspaceId: folderWorkspace.id
+          })
+        }
       }
       appendOrderedGroups(withRepoSectionDisplayLabels(repoEntries), depth + 1)
       for (const childGroup of childGroups) {

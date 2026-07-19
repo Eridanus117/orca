@@ -1260,6 +1260,10 @@ export function getWorktreeDragGroups(rows: HostSectionRow[]): WorktreeDragGroup
     ) {
       continue
     }
+    if (row.folderWorkspaceId) {
+      // Why: these rows project lineage under a folder; reorder drops can clear that lineage.
+      continue
+    }
     if (row.sectionKey === PINNED_GROUP_KEY && naturalWorktreeIds.has(row.worktree.id)) {
       continue
     }
@@ -1298,6 +1302,10 @@ export function getWorktreeDragIndexes(rows: readonly HostSectionRow[]): {
       continue
     }
     if (row.type !== 'item') {
+      continue
+    }
+    if (row.folderWorkspaceId) {
+      // Why: no drag index means a projected row cannot start sidebar reordering.
       continue
     }
     if (row.sectionKey === PINNED_GROUP_KEY && naturalWorktreeIds.has(row.worktree.id)) {
@@ -4918,7 +4926,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                     onContextMenuSelect={onContextMenuSelect}
                     onCardDragStart={handleWorktreeCardDragStart}
                     onCardDragEnd={clearWorktreeDrag}
-                    hideRepoBadge={groupBy === 'repo'}
+                    hideRepoBadge={groupBy === 'repo' && !itemRow.folderWorkspaceId}
                     // Why: pinned worktrees mix repos in one section; only that
                     // section needs the leading repo identity chip.
                     hostContextLabel={itemRow.hostContextLabel}
@@ -5881,7 +5889,8 @@ const WorktreeList = React.memo(function WorktreeList({
         visibleFolderWorkspacesForRows,
         hostLabelById,
         defaultHostId,
-        pinnedDisplayPolicy
+        pinnedDisplayPolicy,
+        workspaceLineageByChildKey
       ),
     [
       groupBy,
@@ -5904,7 +5913,8 @@ const WorktreeList = React.memo(function WorktreeList({
       newExternalWorktreesInboxByRepo,
       pendingCreations,
       hostLabelById,
-      pinnedDisplayPolicy
+      pinnedDisplayPolicy,
+      workspaceLineageByChildKey
     ]
   )
   const orderedHostOptions = useMemo(
