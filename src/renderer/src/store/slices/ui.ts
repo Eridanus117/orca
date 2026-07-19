@@ -24,6 +24,7 @@ import type {
   WorkspaceStatusDefinition,
   AgentActivityDisplayMode,
   ProjectOrderBy,
+  ProjectWorkspaceLayout,
   WorktreeCardProperty,
   WorktreeCardMode,
   WorkspaceHostOrder,
@@ -885,6 +886,8 @@ export type UISlice = {
   setSortBy: (s: UISlice['sortBy']) => void
   projectOrderBy: ProjectOrderBy
   setProjectOrderBy: (p: ProjectOrderBy) => void
+  projectWorkspaceLayout: ProjectWorkspaceLayout
+  setProjectWorkspaceLayout: (layout: ProjectWorkspaceLayout) => void
   showActiveOnly: boolean
   setShowActiveOnly: (v: boolean) => void
   showSleepingWorkspaces: boolean
@@ -2028,6 +2031,9 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
   projectOrderBy: 'manual',
   setProjectOrderBy: (p) => set({ projectOrderBy: p }),
 
+  projectWorkspaceLayout: 'repositories',
+  setProjectWorkspaceLayout: (layout) => set({ projectWorkspaceLayout: layout }),
+
   showActiveOnly: false,
   setShowActiveOnly: (v) => set({ showActiveOnly: v }),
 
@@ -2474,6 +2480,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         // Why: main-process getUI() already normalized this to a valid value
         // (defaulting to 'manual'); read it through without migrating sortBy.
         projectOrderBy: ui.projectOrderBy,
+        projectWorkspaceLayout: ui.projectWorkspaceLayout ?? 'repositories',
         // Why: Active-only was retired. Force the old persisted flag off so an
         // old profile cannot invisibly keep narrowing the workspace list.
         showActiveOnly: false,

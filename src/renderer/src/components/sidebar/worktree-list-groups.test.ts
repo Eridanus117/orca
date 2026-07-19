@@ -3029,6 +3029,173 @@ describe('project groups', () => {
     ])
   })
 
+  it('does not render archived folder workspaces in Projects view', () => {
+    const group: ProjectGroup = {
+      id: 'group-root',
+      name: 'Platform',
+      parentPath: '/monorepo',
+      parentGroupId: null,
+      createdFrom: 'folder-scan',
+      tabOrder: 0,
+      isCollapsed: false,
+      color: null,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const archivedFolderWorkspace: FolderWorkspace = {
+      id: 'folder-workspace-archived',
+      projectGroupId: group.id,
+      name: 'Finished work',
+      folderPath: '/monorepo',
+      linkedTask: null,
+      comment: '',
+      isArchived: true,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 10,
+      lastActivityAt: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    const rows = buildRows(
+      'repo',
+      [],
+      new Map(),
+      null,
+      new Set(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      [group],
+      new Set(),
+      new Map(),
+      new Map(),
+      [],
+      undefined,
+      [archivedFolderWorkspace]
+    )
+
+    expect(rows).toMatchObject([
+      {
+        type: 'header',
+        key: 'project-group:group-root',
+        count: 0
+      }
+    ])
+    expect(rows.some((row) => row.type === 'folder-workspace')).toBe(false)
+  })
+
+  it('nests lineage across repositories when a Project Group uses the Items layout', () => {
+    const group: ProjectGroup = {
+      id: 'group-logistics',
+      name: 'Logistics',
+      parentPath: '/workspace/logistics',
+      parentGroupId: null,
+      createdFrom: 'folder-scan',
+      tabOrder: 0,
+      isCollapsed: false,
+      color: null,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const centerRepo: Repo = {
+      ...repo,
+      id: 'repo-center',
+      displayName: 'cnortools-center',
+      projectGroupId: group.id
+    }
+    const sharedRepo: Repo = {
+      ...repo,
+      id: 'repo-shared',
+      displayName: 'carriageshared',
+      projectGroupId: group.id
+    }
+    const parent: Worktree = {
+      ...worktree,
+      id: 'wt-center',
+      instanceId: 'instance-center',
+      repoId: centerRepo.id,
+      displayName: 'FREIGHT-45'
+    }
+    const child: Worktree = {
+      ...worktree,
+      id: 'wt-shared',
+      instanceId: 'instance-shared',
+      repoId: sharedRepo.id,
+      displayName: 'FREIGHT-45 · shared'
+    }
+    const lineage: WorktreeLineage = {
+      worktreeId: child.id,
+      worktreeInstanceId: 'instance-shared',
+      parentWorktreeId: parent.id,
+      parentWorktreeInstanceId: 'instance-center',
+      origin: 'cli',
+      capture: { source: 'env-workspace', confidence: 'inferred' },
+      createdAt: 1
+    }
+    const worktreeMap = new Map([
+      [parent.id, parent],
+      [child.id, child]
+    ])
+
+    const rows = buildRows(
+      'repo',
+      [child, parent],
+      new Map([
+        [centerRepo.id, centerRepo],
+        [sharedRepo.id, sharedRepo]
+      ]),
+      null,
+      new Set(),
+      undefined,
+      undefined,
+      'manual',
+      { [child.id]: lineage },
+      worktreeMap,
+      true,
+      undefined,
+      [group],
+      new Set(),
+      new Map(),
+      new Map(),
+      [],
+      undefined,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      {},
+      'lineage'
+    )
+
+    expect(rows.filter((row) => row.type === 'header')).toMatchObject([
+      {
+        key: 'project-group:group-logistics',
+        count: 1
+      }
+    ])
+    expect(rows.filter((row) => row.type === 'item')).toMatchObject([
+      {
+        worktree: { id: parent.id },
+        depth: 0,
+        groupDepth: 1,
+        sectionKey: 'project-group:group-logistics:lineage'
+      },
+      {
+        worktree: { id: child.id },
+        repo: { id: sharedRepo.id },
+        depth: 1,
+        groupDepth: 1,
+        sectionKey: 'project-group:group-logistics:lineage'
+      }
+    ])
+  })
+
   it('projects attached cross-repo worktrees below a folder workspace without repo duplicates', () => {
     const group: ProjectGroup = {
       id: 'group-logistics',

@@ -819,6 +819,15 @@ function normalizeProjectOrderBy(projectOrderBy: unknown): PersistedState['ui'][
   return getDefaultUIState().projectOrderBy
 }
 
+function normalizeProjectWorkspaceLayout(
+  layout: unknown
+): NonNullable<PersistedState['ui']['projectWorkspaceLayout']> {
+  if (layout === 'repositories' || layout === 'lineage') {
+    return layout
+  }
+  return getDefaultUIState().projectWorkspaceLayout ?? 'repositories'
+}
+
 function normalizeRightSidebarTab(tab: unknown): PersistedState['ui']['rightSidebarTab'] {
   if (
     tab === 'explorer' ||
@@ -5453,6 +5462,9 @@ export class Store {
       groupBy: normalizeGroupBy(this.state.ui?.groupBy),
       sortBy: normalizeSortBy(this.state.ui?.sortBy),
       projectOrderBy: normalizeProjectOrderBy(this.state.ui?.projectOrderBy),
+      projectWorkspaceLayout: normalizeProjectWorkspaceLayout(
+        this.state.ui?.projectWorkspaceLayout
+      ),
       rightSidebarTab: normalizeRightSidebarTab(this.state.ui?.rightSidebarTab),
       rightSidebarExplorerView: normalizeRightSidebarExplorerView(
         this.state.ui?.rightSidebarExplorerView,
@@ -5529,6 +5541,9 @@ export class Store {
       projectOrderBy: updates.projectOrderBy
         ? normalizeProjectOrderBy(updates.projectOrderBy)
         : normalizeProjectOrderBy(this.state.ui?.projectOrderBy),
+      projectWorkspaceLayout: updates.projectWorkspaceLayout
+        ? normalizeProjectWorkspaceLayout(updates.projectWorkspaceLayout)
+        : normalizeProjectWorkspaceLayout(this.state.ui?.projectWorkspaceLayout),
       rightSidebarTab: nextRightSidebarTab,
       rightSidebarExplorerView: nextRightSidebarExplorerView,
       worktreeCardProperties:

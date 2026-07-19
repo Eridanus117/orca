@@ -9,6 +9,7 @@ import type {
   Repo,
   ProjectGroup,
   ProjectOrderBy,
+  ProjectWorkspaceLayout,
   Worktree,
   WorktreeLineage,
   WorkspaceLineage,
@@ -1063,7 +1064,8 @@ export function buildRows(
   hostLabelById?: ReadonlyMap<string, string>,
   defaultHostId: ExecutionHostId = LOCAL_EXECUTION_HOST_ID,
   pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy = getPinnedWorktreeDisplayPolicy(settings),
-  workspaceLineageByChildKey: Readonly<Record<string, WorkspaceLineage>> = {}
+  workspaceLineageByChildKey: Readonly<Record<string, WorkspaceLineage>> = {},
+  projectWorkspaceLayout: ProjectWorkspaceLayout = 'repositories'
 ): Row[] {
   const result: Row[] = []
   const projectIndex = buildProjectGroupingIndex(projectGrouping)
@@ -1093,6 +1095,9 @@ export function buildRows(
   const folderAttachmentIds = new Set<string>()
   if (groupBy === 'repo' && projectGroups.length > 0) {
     for (const folderWorkspace of folderWorkspaces) {
+      if (folderWorkspace.isArchived) {
+        continue
+      }
       if (!projectGroupsById.get(folderWorkspace.projectGroupId)?.parentPath) {
         continue
       }
@@ -1299,6 +1304,39 @@ export function buildRows(
     }
   }
 
+  const appendRepoUtilityRows = (
+    key: string,
+    group: WorktreeGroupEntry,
+    repo: Repo | undefined
+  ): void => {
+    const repoIds =
+      group.repoIds.size > 0
+        ? [...group.repoIds]
+        : repo
+          ? [repo.id]
+          : key.startsWith('repo:')
+            ? [key.slice('repo:'.length)]
+            : []
+    for (const repoId of repoIds) {
+      const candidate = importedWorktreesByRepo.get(repoId)
+      if (candidate) {
+        result.push(buildImportedWorktreesCardRow(candidate, 'repo-group'))
+      }
+    }
+    for (const repoId of repoIds) {
+      const candidate = newExternalWorktreesInboxByRepo.get(repoId)
+      if (candidate) {
+        result.push(buildNewExternalWorktreesInboxRow(candidate))
+      }
+    }
+    // Why: in-progress creates stay ahead of the worktree rows they will join.
+    for (const repoId of repoIds) {
+      for (const creation of pendingByRepo.get(repoId) ?? []) {
+        result.push(buildPendingCreationRow(creation, repoMap))
+      }
+    }
+  }
+
   const appendOrderedGroups = (
     groupsToAppend: OrderedGroupEntry[],
     projectGroupDepth = 0
@@ -1357,34 +1395,7 @@ export function buildRows(
       result.push(header)
       if (!isCollapsed) {
         if (groupBy === 'repo') {
-          const repoIds =
-            group.repoIds.size > 0
-              ? [...group.repoIds]
-              : repo
-                ? [repo.id]
-                : key.startsWith('repo:')
-                  ? [key.slice('repo:'.length)]
-                  : []
-          for (const repoId of repoIds) {
-            const candidate = importedWorktreesByRepo.get(repoId)
-            if (candidate) {
-              result.push(buildImportedWorktreesCardRow(candidate, 'repo-group'))
-            }
-          }
-          for (const repoId of repoIds) {
-            const candidate = newExternalWorktreesInboxByRepo.get(repoId)
-            if (candidate) {
-              result.push(buildNewExternalWorktreesInboxRow(candidate))
-            }
-          }
-          // Why: surface in-progress creates at the top of their own repo so the
-          // new workspace appears where it will land, not flashed to the very top
-          // of the sidebar.
-          for (const repoId of repoIds) {
-            for (const creation of pendingByRepo.get(repoId) ?? []) {
-              result.push(buildPendingCreationRow(creation, repoMap))
-            }
-          }
+          appendRepoUtilityRows(key, group, repo)
         }
         const items = groupBy === 'repo' ? orderMainWorktreeFirst(group.items) : group.items
         const hostContextLabelByRepoId =
@@ -1446,6 +1457,9 @@ export function buildRows(
 
   const folderWorkspacesByProjectGroupId = new Map<string, FolderWorkspace[]>()
   for (const workspace of folderWorkspaces) {
+    if (workspace.isArchived) {
+      continue
+    }
     const group = projectGroupsById.get(workspace.projectGroupId)
     if (!group?.parentPath) {
       continue
@@ -1475,8 +1489,37 @@ export function buildRows(
     )
   }
 
+  const naturalWorktreeRank = new Map(
+    naturalWorktrees.map((naturalWorktree, index) => [naturalWorktree.id, index])
+  )
+  const getProjectGroupWorktrees = (entries: OrderedGroupEntry[]): Worktree[] => {
+    const uniqueWorktrees = new Map<string, Worktree>()
+    for (const [, entry] of entries) {
+      for (const entryWorktree of entry.items) {
+        uniqueWorktrees.set(entryWorktree.id, entryWorktree)
+      }
+    }
+    return [...uniqueWorktrees.values()].sort(
+      (left, right) =>
+        (naturalWorktreeRank.get(left.id) ?? Number.POSITIVE_INFINITY) -
+        (naturalWorktreeRank.get(right.id) ?? Number.POSITIVE_INFINITY)
+    )
+  }
+  const countLineageRoots = (projectWorktrees: Worktree[]): number => {
+    const visibleIds = new Set(projectWorktrees.map((projectWorktree) => projectWorktree.id))
+    const rootCount = projectWorktrees.filter((projectWorktree) => {
+      const lineage = getLineageRenderInfo(projectWorktree, lineageById, worktreeMap)
+      return lineage.state !== 'valid' || !visibleIds.has(lineage.parent.id)
+    }).length
+    // Why: cyclic imported lineage still renders as one fallback tree.
+    return rootCount || (projectWorktrees.length > 0 ? 1 : 0)
+  }
   const getProjectGroupSubtreeCount = (groupId: string): number => {
-    const directCount = groupByProjectGroupId.get(groupId)?.length ?? 0
+    const entries = groupByProjectGroupId.get(groupId) ?? []
+    const directCount =
+      projectWorkspaceLayout === 'lineage'
+        ? countLineageRoots(getProjectGroupWorktrees(entries))
+        : entries.length
     const folderWorkspaceCount = folderWorkspacesByProjectGroupId.get(groupId)?.length ?? 0
     const children = childGroupsByParentId.get(groupId) ?? []
     return children.reduce(
@@ -1487,6 +1530,7 @@ export function buildRows(
 
   const appendProjectGroup = (projectGroup: ProjectGroup, depth: number): void => {
     const repoEntries = sortRepoEntriesWithinGroup(groupByProjectGroupId.get(projectGroup.id) ?? [])
+    const projectWorktrees = getProjectGroupWorktrees(repoEntries)
     const childGroups = childGroupsByParentId.get(projectGroup.id) ?? []
     const key = getProjectGroupHeaderKey(projectGroup.id)
     result.push({
@@ -1534,7 +1578,36 @@ export function buildRows(
           })
         }
       }
-      appendOrderedGroups(withRepoSectionDisplayLabels(repoEntries), depth + 1)
+      if (projectWorkspaceLayout === 'lineage') {
+        for (const [repoKey, repoEntry] of repoEntries) {
+          appendRepoUtilityRows(repoKey, repoEntry, repoEntry.repo)
+        }
+        if (projectWorktrees.length > 0) {
+          const combinedRepoIds = new Set(
+            projectWorktrees.map((projectWorktree) => projectWorktree.repoId)
+          )
+          const hostContextLabelByRepoId = getMixedHostContextLabels(
+            {
+              label: projectGroup.name,
+              items: projectWorktrees,
+              repo: repoEntries[0]?.[1].repo,
+              repoIds: combinedRepoIds
+            },
+            repoMap,
+            projectIndex,
+            hostLabelById
+          )
+          appendWorktreeRows(result, projectWorktrees, repoMap, lineageById, worktreeMap, {
+            nestLineage: true,
+            collapsedGroups,
+            groupDepth: depth + 1,
+            sectionKey: `${key}:lineage`,
+            hostContextLabelByRepoId
+          })
+        }
+      } else {
+        appendOrderedGroups(withRepoSectionDisplayLabels(repoEntries), depth + 1)
+      }
       for (const childGroup of childGroups) {
         appendProjectGroup(childGroup, depth + 1)
       }
