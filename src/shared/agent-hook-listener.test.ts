@@ -99,6 +99,7 @@ describe('shared agent-hook-listener', () => {
     expect(resolveHookSource('/hook/antigravity')).toBe('antigravity')
     expect(resolveHookSource('/hook/grok')).toBe('grok')
     expect(resolveHookSource('/hook/hermes')).toBe('hermes')
+    expect(resolveHookSource('/hook/qoder')).toBe('qoder')
     expect(resolveHookSource('/hook/pi')).toBe('pi')
     expect(resolveHookSource('/hook/omp')).toBe('omp')
     expect(resolveHookSource('/hook/command-code')).toBe('command-code')
@@ -136,6 +137,63 @@ describe('shared agent-hook-listener', () => {
     expect(event!.payload.state).toBe('working')
     expect(event!.payload.prompt).toBe('hello')
     expect(event!.payload.agentType).toBe('claude')
+  })
+
+  it('normalizes Qoder lifecycle, approval, and idle notifications', () => {
+    const working = normalizeHookPayload(
+      state,
+      'qoder',
+      {
+        paneKey: PANE_KEY,
+        payload: {
+          hook_event_name: 'UserPromptSubmit',
+          prompt: 'upgrade contracts',
+          session_id: 'qoder-session',
+          transcript_path: '/tmp/qoder.jsonl'
+        }
+      },
+      'production'
+    )
+    const permission = normalizeHookPayload(
+      state,
+      'qoder',
+      {
+        paneKey: PANE_KEY,
+        payload: {
+          hook_event_name: 'Notification',
+          notification_type: 'permission_prompt'
+        }
+      },
+      'production'
+    )
+    const done = normalizeHookPayload(
+      state,
+      'qoder',
+      {
+        paneKey: PANE_KEY,
+        payload: { hook_event_name: 'Notification', notification_type: 'idle_prompt' }
+      },
+      'production'
+    )
+
+    expect(working).toMatchObject({
+      providerSession: {
+        key: 'session_id',
+        id: 'qoder-session',
+        transcriptPath: '/tmp/qoder.jsonl'
+      },
+      payload: { agentType: 'qoder', state: 'working', prompt: 'upgrade contracts' }
+    })
+    expect(permission?.payload).toMatchObject({
+      agentType: 'qoder',
+      state: 'waiting',
+      prompt: 'upgrade contracts'
+    })
+    expect(done?.payload).toMatchObject({
+      agentType: 'qoder',
+      state: 'done',
+      prompt: 'upgrade contracts'
+    })
   })
 
   it('normalizes Gemini BeforeTool to working with tool fields', () => {

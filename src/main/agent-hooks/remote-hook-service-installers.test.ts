@@ -20,6 +20,7 @@ import { CopilotHookService } from '../copilot/hook-service'
 import { HermesHookService } from '../hermes/hook-service'
 import { DevinHookService } from '../devin/hook-service'
 import { KimiHookService } from '../kimi/hook-service'
+import { QoderHookService, qoderHookService } from '../qoder/hook-service'
 import { openClaudeHookService } from '../openclaude/hook-service'
 import { ampHookService } from '../amp/hook-service'
 import { antigravityHookService } from '../antigravity/hook-service'
@@ -700,7 +701,8 @@ describe('remote hook service installers', () => {
       ['copilot', copilotHookService],
       ['hermes', hermesHookService],
       ['devin', devinHookService],
-      ['kimi', kimiHookService]
+      ['kimi', kimiHookService],
+      ['qoder', qoderHookService]
     ])
 
     // Guard against a service silently missing from the map above as new agents land.
@@ -718,12 +720,23 @@ describe('remote hook service installers', () => {
     expect(missing).toEqual([])
   })
 
-  it('installs Droid and Copilot when running the aggregate remote installer (issue #7253)', async () => {
+  it('installs all regression-sensitive agents through the aggregate remote installer', async () => {
     const { sftp } = createFakeSftp()
     const results = await installRemoteManagedAgentHooks(sftp, '/home/dev')
     const byAgent = new Map(results.map((r) => [r.agent, r.state]))
     expect(byAgent.get('droid')).toBe('installed')
     expect(byAgent.get('copilot')).toBe('installed')
+    expect(byAgent.get('qoder')).toBe('installed')
+  })
+
+  it('installs remote Qoder hooks into qodercli settings.json', async () => {
+    const { sftp, fs } = createFakeSftp()
+
+    const status = await new QoderHookService().installRemote(sftp, '/home/dev')
+
+    expect(status.state).toBe('installed')
+    expect(status.configPath).toBe('/home/dev/.qoder/settings.json')
+    expect(fs.files.get('/home/dev/.orca/agent-hooks/qoder-hook.sh')).toContain('#!/bin/sh')
   })
 
   it('installs remote Droid hooks into Factory settings.json (issue #7253)', async () => {
