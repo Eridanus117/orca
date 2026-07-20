@@ -32,12 +32,16 @@ function assertPackagedDaemonEntryExists(resourcesDir) {
 // <appOutDir>/resources elsewhere). execPath defaults to the packaging Node.
 function verifyPackagedDaemonEntryBoots(resourcesDir, options = {}) {
   const execPath = options.execPath || process.execPath
+  const spawn = options.spawnSync || spawnSync
+  const timeoutMs = options.timeoutMs ?? 60_000
   const entryPath = assertPackagedDaemonEntryExists(resourcesDir)
 
-  const result = spawnSync(execPath, [entryPath], { encoding: 'utf8', timeout: 10_000 })
+  // Why: afterPack runs while the host is still under packaging load; 10 seconds
+  // produced false failures even though the same packaged entry booted immediately.
+  const result = spawn(execPath, [entryPath], { encoding: 'utf8', timeout: timeoutMs })
   if (result.error) {
     throw new Error(
-      `[verify-packaged-daemon-entry] could not launch daemon-entry.js: ${result.error.message}`
+      `[verify-packaged-daemon-entry] could not launch daemon-entry.js within ${timeoutMs}ms: ${result.error.message}`
     )
   }
   const stderr = result.stderr || ''

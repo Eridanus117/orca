@@ -34,6 +34,43 @@ Fork 提交应按能力分组，避免把不同能力揉进同一提交：
 升级时按提交顺序重放这些补丁。若官方已经等价实现某项能力，先验证数据迁移和 UI
 行为，再单独删除对应补丁；不要借升级顺手重构其他代码。
 
+## 首次建立稳定的本地签名
+
+macOS 的 Documents、Desktop、Downloads 等隐私授权不仅识别 bundle ID，也校验应用的
+代码指定要求（designated requirement）。若每次构建都使用新的 ad-hoc `cdhash`，
+系统会把同名的 `Orca Fork.app` 视为不同代码，反复要求授权。
+
+每台用于构建 Fork 的 Mac 只需初始化一次本地签名身份。先预演，再写入登录钥匙串：
+
+```bash
+pnpm fork:mac signing-setup
+pnpm fork:mac signing-setup --apply
+```
+
+脚本会：
+
+1. 把当前用户 trust settings 备份到
+   `~/Library/Application Support/Orca Fork Installer/signing-trust-backups/`。
+2. 创建名为 `Orca Fork Local Code Signing` 的自签名 code-signing 证书。
+3. 把私钥以不可导出方式写入登录钥匙串，并只授权 `/usr/bin/codesign` 使用。
+4. 将证书的信任范围限制为代码签名。
+
+`build`、`install` 和 `update` 会自动选择这个精确身份；若机器使用已有的受管证书，
+可显式设置 `ORCA_FORK_SIGN_IDENTITY` 覆盖。未找到可用身份时构建直接失败，不再静默
+退回 ad-hoc 签名。
+
+用以下命令确认安装版的指定要求包含固定 bundle ID 与证书锚点，而不是只有
+`cdhash`：
+
+```bash
+pnpm fork:mac status
+codesign --verify --deep --strict "$HOME/Applications/Orca Fork.app"
+codesign -d -r- "$HOME/Applications/Orca Fork.app"
+```
+
+从旧 ad-hoc 版本迁移到稳定签名后，macOS 可能要求最后授权一次；之后正常更新会复用
+同一指定要求。恢复旧的 ad-hoc 应用快照则可能再次触发授权。
+
 ## 选择候选 release tag
 
 先确认工作区干净并同步官方 tag：
@@ -145,7 +182,8 @@ git diff --stat "$NEW_BASE..HEAD"
 
 ```bash
 pnpm exec vitest run --config config/vitest.config.ts \
-  config/scripts/orca-fork-macos.test.mjs
+  config/scripts/orca-fork-macos.test.mjs \
+  config/scripts/verify-packaged-daemon-entry.test.mjs
 pnpm typecheck
 pnpm fork:mac status
 pnpm fork:mac update
@@ -176,7 +214,7 @@ parcel watcher。
 只安装已构建 bundle 的 `install --apply` 与恢复快照的 `rollback --apply` 仍是停机
 操作；执行前必须正常退出官方 Orca 与 Orca Fork 的全部进程。
 
-更新完成并自动拉起 `/Applications/Orca Fork.app` 后，至少验证：
+更新完成并自动拉起 `~/Applications/Orca Fork.app` 后，至少验证：
 
 1. 原有项目、Folder Workspace、worktree 与 terminal 仍可见。
 2. Folder Workspace 下的跨仓 worktree 仍按事项聚合。
