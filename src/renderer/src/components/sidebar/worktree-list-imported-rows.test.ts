@@ -6,7 +6,7 @@ import {
   getWorktreeDragIndexes,
   renderRowContainsWorktree
 } from './WorktreeList'
-import type { Repo, Worktree } from '../../../../shared/types'
+import type { FolderWorkspace, ProjectGroup, Repo, Worktree } from '../../../../shared/types'
 import type { Row } from './worktree-list-groups'
 
 const repo: Repo = {
@@ -75,6 +75,46 @@ const makeImportedCardRow = (): Extract<Row, { type: 'imported-worktrees-card' }
   placement: 'repo-group'
 })
 
+const makeFolderWorkspaceRow = (): Extract<Row, { type: 'folder-workspace' }> => {
+  const projectGroup: ProjectGroup = {
+    id: 'group-1',
+    name: 'Logistics',
+    parentPath: '/workspace/logistics',
+    parentGroupId: null,
+    createdFrom: 'manual',
+    tabOrder: 0,
+    isCollapsed: false,
+    color: null,
+    createdAt: 1,
+    updatedAt: 1
+  }
+  const folderWorkspace: FolderWorkspace = {
+    id: 'folder-1',
+    projectGroupId: projectGroup.id,
+    name: 'FREIGHT-45',
+    folderPath: '/workspace/logistics/FREIGHT-45',
+    linkedTask: null,
+    comment: '',
+    isArchived: false,
+    isUnread: false,
+    isPinned: false,
+    sortOrder: 0,
+    lastActivityAt: 0,
+    createdAt: 1,
+    updatedAt: 1
+  }
+  return {
+    type: 'folder-workspace',
+    key: 'folder-workspace:folder-1',
+    folderWorkspace,
+    projectGroup,
+    attachedWorktreeIds: ['attached'],
+    attachmentsCollapsed: false,
+    depth: 0,
+    groupDepth: 1
+  }
+}
+
 describe('imported worktree virtual rows', () => {
   it('uses stable imported row keys and does not match worktree ids', () => {
     const card = makeImportedCardRow()
@@ -117,7 +157,8 @@ describe('imported worktree virtual rows', () => {
     expect(groupKeyByRowKey.get('all:main')).toBe('all')
   })
 
-  it('keeps folder workspace projection rows out of reorder drag groups', () => {
+  it('treats a folder task group as one draggable row while keeping its projections attached', () => {
+    const folderRow = makeFolderWorkspaceRow()
     const projectedRow = {
       ...makeWorktreeRow('attached'),
       rowKey: 'folder-workspace:folder-1:attached',
@@ -126,13 +167,19 @@ describe('imported worktree virtual rows', () => {
     }
     const rows = [
       makeHeaderRow('project-group:group-1'),
+      folderRow,
       projectedRow,
       makeHeaderRow('repo:repo-1'),
       makeWorktreeRow('regular')
     ]
-    const { groupKeyByRowKey } = getWorktreeDragIndexes(rows)
+    const { groupIndexByRowKey, groupKeyByRowKey } = getWorktreeDragIndexes(rows)
 
-    expect(getWorktreeDragGroups(rows)).toEqual([{ key: 'repo:repo-1', worktreeIds: ['regular'] }])
+    expect(getWorktreeDragGroups(rows)).toEqual([
+      { key: 'project-group:group-1', worktreeIds: ['folder:folder-1'] },
+      { key: 'repo:repo-1', worktreeIds: ['regular'] }
+    ])
+    expect(groupKeyByRowKey.get('folder:folder-1')).toBe('project-group:group-1')
+    expect(groupIndexByRowKey.get('folder:folder-1')).toBe(0)
     expect(groupKeyByRowKey.has(projectedRow.rowKey)).toBe(false)
   })
 

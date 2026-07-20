@@ -111,6 +111,7 @@ type WorktreeCardProps = {
   flushSurface?: boolean
   lineageChildCount?: number
   lineageCollapsed?: boolean
+  collapsedLineageAgentWorktreeIds?: readonly string[]
   lineageChildren?: React.ReactNode
   lineageChildrenStyle?: React.CSSProperties
   onLineageToggle?: (event: React.MouseEvent<HTMLButtonElement>) => void
@@ -218,6 +219,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
   flushSurface = false,
   lineageChildCount = 0,
   lineageCollapsed = false,
+  collapsedLineageAgentWorktreeIds,
   lineageChildren,
   lineageChildrenStyle,
   onLineageToggle,
@@ -1745,11 +1747,21 @@ const WorktreeCard = React.memo(function WorktreeCard({
              follow the title, counterbalance the card stack gap so both rows
              read as one compact header group. */}
         {showInlineAgentList && (
-          <WorktreeCardAgents
-            worktreeId={worktree.id}
-            agents={agentActivityDisplayMode === 'compact' ? compactInlineAgentRows : undefined}
-            className={hasMetaRow || remoteBranchConflict ? 'mt-0' : '-mt-1'}
-          />
+          <>
+            <WorktreeCardAgents
+              worktreeId={worktree.id}
+              agents={agentActivityDisplayMode === 'compact' ? compactInlineAgentRows : undefined}
+              className={hasMetaRow || remoteBranchConflict ? 'mt-0' : '-mt-1'}
+            />
+            {lineageCollapsed &&
+              collapsedLineageAgentWorktreeIds?.map((childWorktreeId) => (
+                <WorktreeCardAgents
+                  key={childWorktreeId}
+                  worktreeId={childWorktreeId}
+                  className="mt-0"
+                />
+              ))}
+          </>
         )}
 
         {showLineageChildChip && (

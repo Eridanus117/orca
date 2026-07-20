@@ -128,6 +128,8 @@ export type FolderWorkspaceRow = {
   key: string
   folderWorkspace: FolderWorkspace
   projectGroup: ProjectGroup
+  attachedWorktreeIds: string[]
+  attachmentsCollapsed: boolean
   depth: number
   groupDepth: number
 }
@@ -1546,16 +1548,19 @@ export function buildRows(
     if (!collapsedGroups.has(key)) {
       for (const folderWorkspace of folderWorkspacesByProjectGroupId.get(projectGroup.id) ?? []) {
         const sectionKey = `folder-workspace:${folderWorkspace.id}`
+        const attachedWorktrees = folderAttachmentsById.get(folderWorkspace.id) ?? []
+        const attachmentsCollapsed = collapsedGroups.has(sectionKey)
         result.push({
           type: 'folder-workspace',
           key: sectionKey,
           folderWorkspace,
           projectGroup,
+          attachedWorktreeIds: attachedWorktrees.map((attachedWorktree) => attachedWorktree.id),
+          attachmentsCollapsed,
           depth: 0,
           groupDepth: depth + 1
         })
-        const attachedWorktrees = folderAttachmentsById.get(folderWorkspace.id) ?? []
-        if (attachedWorktrees.length > 0) {
+        if (attachedWorktrees.length > 0 && !attachmentsCollapsed) {
           const hostContextLabelByRepoId = new Map<string, string>()
           for (const attachedWorktree of attachedWorktrees) {
             const label = getRepoHostLabel(
