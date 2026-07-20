@@ -5,10 +5,12 @@ description: >-
   terminals, repos, automations, worktree comments, and the browser embedded
   inside the Orca app. Use when the user says "$orca-cli", "use orca cli",
   "Orca worktree", "child worktree", "cardStatus", "spawn codex/claude in a worktree",
-  "read/wait/send Orca terminal", "terminal send", "full handoff", "handover",
-  "give this to another agent", "another worktree", "Orca browser", or
-  "control the browser inside Orca". Prefer this over raw `git worktree`, ad hoc
-  PTYs, Playwright, or Computer Use when the task touches Orca-managed state.
+  "clean up Orca worktrees", "stale worktrees", "worktree sprawl",
+  "absorb or delete leaked code", "read/wait/send Orca terminal", "terminal send",
+  "full handoff", "handover", "give this to another agent", "another worktree",
+  "Orca browser", or "control the browser inside Orca". Prefer this over raw
+  `git worktree`, ad hoc PTYs, Playwright, or Computer Use when the task touches
+  Orca-managed state.
   Use Computer Use for browser windows, webviews, or desktop UI outside Orca's
   embedded browser.
 ---
@@ -115,7 +117,6 @@ ORCA worktree create --name independent-task --no-parent --json
 ORCA worktree set --worktree id:<repoId>::<worktreePath> --display-name "My Task" --json
 ORCA worktree set --worktree active --comment "reproduced bug; testing fix" --json
 ORCA worktree set --worktree active --workspace-status in-review --json
-ORCA worktree rm --worktree id:<repoId>::<worktreePath> --force --json
 ```
 
 Selectors:
@@ -143,7 +144,7 @@ ORCA worktree create --name task --setup skip --json
 ORCA worktree create --name task --run-hooks --json
 ```
 
-- `--agent <id>` launches that agent **in the first terminal** (Orca docs: *"`--agent` launches the selected agent in the first terminal"*); `--prompt <text>` sends initial work to it. Known ids include `claude`, `codex`, `omp`, `pi`, `grok`, and other installed TUI agents.
+- `--agent <id>` launches that agent **in the first terminal** (Orca docs: _"`--agent` launches the selected agent in the first terminal"_); `--prompt <text>` sends initial work to it. Known ids include `claude`, `codex`, `omp`, `pi`, `grok`, and other installed TUI agents.
 - **Prefer agent-first create for agent workers.** `orca worktree create --agent <id> --prompt "..."` puts the agent in the worktree's first terminal without adding a separate fallback shell for that worker. Repo setup or default-terminal settings may still add tabs or splits. Without configured default tabs, the bare-create fallback shell plus a later `terminal create --command <agent>` is an anti-pattern for ordinary agent worktrees — use `--agent` instead of “create worktree, then open agent.” Configured default tabs are intentional surfaces; never treat one as disposable without verifying that it is an unused shell.
 - After create, use exactly one agent handle: `startupTerminal.handle` from the create response when present, or the matching result from `orca terminal list --worktree id:<repoId>::<newWorktreePath> --json` (or `name:<displayName>`) when the response omits it. If a handle later returns `terminal_handle_stale`, re-list it; never dual-send to old and replacement handles.
 - `--setup run|skip|inherit` controls repo setup hooks. Default is `inherit`, which follows the repo's setup policy.
@@ -152,6 +153,30 @@ ORCA worktree create --name task --run-hooks --json
 - Let Orca choose setup terminal placement from repo settings, including tab vs split behavior. Do not manually create extra setup terminals when `--agent` already owns the first tab.
 - If an older installed CLI rejects `--agent`, `--prompt`, or `--setup`, create the worktree normally, then run `orca terminal create --worktree <selector> --command "<requested-agent>"` and `orca terminal send` if a prompt is needed. This can leave a fallback shell when no default tabs are configured; close it only after confirming it is unused.
 - `worktree create` creates a new checkout. For a fresh agent in the **current** checkout (no new worktree), use `orca terminal create --worktree active --command "codex" --json` — that path does not create a second worktree shell.
+
+### Safe cleanup
+
+Before removing a worktree, inventory both Git and Orca state:
+
+```text
+ORCA worktree list --json
+ORCA worktree ps --json
+ORCA terminal list --worktree <selector> --json
+```
+
+Classify each candidate before acting:
+
+- **Keep** the current session's worktree, any worktree with a live terminal, dirty or untracked files, commits absent from a durable remote, or an active owning task.
+- **Absorb** real work by moving it into the correct task-owned branch or worktree, then validate, commit, and push it before cleanup. If the source or destination changes during the audit, stop and reclassify instead of combining concurrent edits.
+- **Remove** only when the worktree is clean and its work is merged, durably preserved on a remote, or explicitly abandoned by its owner.
+
+Recheck Git status, remote containment, and Orca terminal state immediately before removal. If another lifecycle manager or task registry owns the worktree, use that manager's guarded closeout command. Otherwise, after all gates pass:
+
+```text
+ORCA worktree rm --worktree <selector> --force --json
+```
+
+For recurring bulk cleanup, put deterministic inventory and classification in CLI/help or a cookbook rather than expanding this skill into an operational script.
 
 ## Worktree Comments
 
