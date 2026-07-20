@@ -27,6 +27,13 @@ import {
   readActiveForkRuntime,
   requestGracefulUpdateQuit
 } from './orca-fork-update-runtime.mjs'
+import {
+  buildReleaseSyncDryRunPlan,
+  parseCommand,
+  syncForkFromRelease
+} from './orca-fork-release-sync.mjs'
+
+export { parseCommand } from './orca-fork-release-sync.mjs'
 
 const projectDir = resolve(import.meta.dirname, '..', '..')
 const distribution = JSON.parse(
@@ -40,9 +47,6 @@ const paths = {
   state: join(appSupportDir, 'Orca Fork Installer')
 }
 
-const COMMANDS = new Set(['status', 'sync', 'install', 'update', 'rollback'])
-const RELEASE_TAG_PATTERN = /^v\d+\.\d+\.\d+(?:-rc\.\d+)?$/
-const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const BACKUP_SCHEMA = 'orca.local-distribution-backup/v2'
 const BACKUP_ROOT_NAME = 'shared-profile-backups'
 const TRANSIENT_PROFILE_NAMES = new Set([
@@ -96,17 +100,6 @@ function timestamp() {
 function ensureMac() {
   if (process.platform !== 'darwin') {
     throw new Error('Orca Fork local distribution currently supports macOS only.')
-  }
-}
-
-function assertCleanCheckout() {
-  const status = capture('git', ['status', '--porcelain'], { cwd: projectDir })
-  if (status) {
-    throw new Error('The source checkout is dirty. Commit or stash changes before syncing.')
-  }
-  const branch = capture('git', ['branch', '--show-current'], { cwd: projectDir })
-  if (!branch || branch === 'main' || branch === 'master') {
-    throw new Error('Sync requires a named fork branch, never main/master.')
   }
 }
 
@@ -468,40 +461,6 @@ function rollback() {
   cleanManagedLegacyForkCli()
 }
 
-export function parseCommand(argv) {
-  const command = argv.find((value) => !value.startsWith('-')) ?? 'status'
-  if (!COMMANDS.has(command)) {
-    throw new Error(`Unknown command: ${command}`)
-  }
-  const baseIndex = argv.indexOf('--base')
-  const base = baseIndex === -1 ? undefined : argv[baseIndex + 1]
-  const fromIndex = argv.indexOf('--from')
-  const from = fromIndex === -1 ? undefined : argv[fromIndex + 1]
-  if (baseIndex !== -1 && (!base || base.startsWith('-'))) {
-    throw new Error('--base requires a release tag.')
-  }
-  if (fromIndex !== -1 && (!from || from.startsWith('-'))) {
-    throw new Error('--from requires the current release tag or commit.')
-  }
-  if (command === 'sync' && (!from || !base)) {
-    throw new Error('sync requires --from <current-base> --base <release-tag>.')
-  }
-  if ((base || from) && command !== 'sync') {
-    throw new Error('--from and --base are only supported by sync.')
-  }
-  if (base && !RELEASE_TAG_PATTERN.test(base)) {
-    throw new Error(`Unsupported release tag: ${base}`)
-  }
-  if (from && !RELEASE_TAG_PATTERN.test(from) && !COMMIT_PATTERN.test(from)) {
-    throw new Error(`Unsupported current base: ${from}`)
-  }
-  return {
-    command,
-    apply: argv.includes('--apply'),
-    ...(from && base ? { from, base } : {})
-  }
-}
-
 export function buildDryRunPlan(command, from, base) {
   switch (command) {
     case 'status':
@@ -509,14 +468,7 @@ export function buildDryRunPlan(command, from, base) {
         'Inspect source, installed app, shared profile, legacy CLI, signing, and pending transaction.'
       ]
     case 'sync':
-      if (!from || !base) {
-        throw new Error('sync requires --from <current-base> --base <release-tag>.')
-      }
-      return [
-        `Fetch official release tag ${base}.`,
-        `Verify ${base} contains current upstream base ${from}.`,
-        'Replay only the Fork patch queue onto the release tag; abort automatically on conflict.'
-      ]
+      return buildReleaseSyncDryRunPlan(from, base)
     case 'install':
       return [
         'Require official Orca, Orca Fork, and their bundle helpers to be stopped.',
@@ -612,28 +564,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (command === 'sync') {
-    assertCleanCheckout()
-    run('git', ['fetch', 'upstream', 'tag', base])
-    if (RELEASE_TAG_PATTERN.test(from)) {
-      run('git', ['fetch', 'upstream', 'tag', from])
-    }
-    const nextBase = capture('git', ['rev-parse', '--verify', `${base}^{commit}`])
-    const currentBase = capture('git', ['rev-parse', '--verify', `${from}^{commit}`])
-    if (!nextBase || !currentBase) {
-      throw new Error('Could not resolve the current or requested upstream base.')
-    }
-    try {
-      run('git', ['merge-base', '--is-ancestor', currentBase, nextBase])
-    } catch {
-      throw new Error(`${base} does not contain current upstream base ${from}.`)
-    }
-    try {
-      // Why: replay only local patches; rebasing by branch name could silently change the baseline.
-      run('git', ['rebase', '--onto', nextBase, currentBase])
-    } catch (error) {
-      run('git', ['rebase', '--abort'])
-      throw error
-    }
+    syncForkFromRelease({ from, base, run, capture })
     return
   }
   if (command === 'install') {

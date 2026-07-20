@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { buildDryRunPlan, parseCommand } from './orca-fork-macos.mjs'
+import { syncForkFromRelease } from './orca-fork-release-sync.mjs'
 import {
   abortPreparedUpdate,
   blockingForkDesktopProcesses,
@@ -50,6 +51,40 @@ describe('orca-fork-macos', () => {
     expect(() => parseCommand(['sync', '--from', 'upstream/main', '--base', 'v1.4.147'])).toThrow(
       'Unsupported current base'
     )
+  })
+
+  it('rebases only the local patch queue after release ancestry validation', () => {
+    const run = vi.fn()
+    const capture = vi.fn((_command, args) => {
+      const invocation = args.join(' ')
+      if (invocation === 'status --porcelain') {
+        return ''
+      }
+      if (invocation === 'branch --show-current') {
+        return 'fork/macos-local'
+      }
+      if (invocation.includes('v1.4.147^{commit}')) {
+        return 'new-base'
+      }
+      if (invocation.includes('v1.4.146^{commit}')) {
+        return 'old-base'
+      }
+      return ''
+    })
+
+    syncForkFromRelease({
+      from: 'v1.4.146',
+      base: 'v1.4.147',
+      run,
+      capture
+    })
+
+    expect(run.mock.calls).toEqual([
+      ['git', ['fetch', 'upstream', 'tag', 'v1.4.147']],
+      ['git', ['fetch', 'upstream', 'tag', 'v1.4.146']],
+      ['git', ['merge-base', '--is-ancestor', 'old-base', 'new-base']],
+      ['git', ['rebase', '--onto', 'new-base', 'old-base']]
+    ])
   })
 
   it('can install a validated existing build without rebuilding it', () => {
