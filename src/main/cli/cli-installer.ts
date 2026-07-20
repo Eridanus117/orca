@@ -370,7 +370,8 @@ export class CliInstaller {
       // Why: default dev registration is a separate command, while tests and
       // diagnostics can still exercise production paths via commandPathOverride.
       if (this.platform === 'darwin') {
-        return `/usr/local/bin/${DEV_COMMAND_NAME}`
+        // Why: local development should never require administrator privileges.
+        return join(this.homePath, '.local', 'bin', DEV_COMMAND_NAME)
       }
       if (this.platform === 'linux') {
         return join(this.homePath, '.local', 'bin', DEV_COMMAND_NAME)

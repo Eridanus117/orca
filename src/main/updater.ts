@@ -125,6 +125,7 @@ let downloadInFlight = false
 /** Guards against the macOS `activate` handler re-opening the old version
  *  while Squirrel's ShipIt is replacing the .app bundle. */
 let quittingForUpdate = false
+let localForkUpdateQuitTimer: ReturnType<typeof setTimeout> | null = null
 let autoUpdater: ElectronAutoUpdater | null = null
 
 function getAutoUpdater(): ElectronAutoUpdater {
@@ -1268,6 +1269,28 @@ export function checkForUpdatesFromMenu(options?: UpdateCheckOptions): void {
 
 export function isQuittingForUpdate(): boolean {
   return quittingForUpdate
+}
+
+/**
+ * Schedules a normal Electron quit for the external local-Fork installer.
+ *
+ * The regular will-quit path disconnects from the detached daemon instead of
+ * killing it, which lets live agent terminals reattach after relaunch.
+ */
+export async function requestLocalForkUpdateQuit(): Promise<void> {
+  if (!isLocalForkDistribution()) {
+    throw new Error('local_fork_update_unavailable')
+  }
+  if (quittingForUpdate || localForkUpdateQuitTimer) {
+    return
+  }
+
+  quittingForUpdate = true
+  await runBeforeUpdateQuitCleanup()
+  localForkUpdateQuitTimer = setTimeout(() => {
+    localForkUpdateQuitTimer = null
+    app.quit()
+  }, 3_000)
 }
 
 export function quitAndInstall(): void {

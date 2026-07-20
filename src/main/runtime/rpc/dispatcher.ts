@@ -44,7 +44,13 @@ export class RpcDispatcher {
     this.registry = buildRegistry(methods)
   }
 
-  async dispatch(request: RpcRequest, options?: { signal?: AbortSignal }): Promise<RpcResponse> {
+  async dispatch(
+    request: RpcRequest,
+    options?: {
+      signal?: AbortSignal
+      requestLocalForkUpdateQuit?: () => Promise<void>
+    }
+  ): Promise<RpcResponse> {
     const meta = this.meta()
     const method = this.registry.get(request.method)
     if (!method) {
@@ -80,7 +86,8 @@ export class RpcDispatcher {
     try {
       const result = await method.handler(parsedParams.value, {
         runtime: this.runtime,
-        signal: options?.signal
+        signal: options?.signal,
+        requestLocalForkUpdateQuit: options?.requestLocalForkUpdateQuit
       })
       this.recordRuntimeFeatureInteraction(request.method, result, undefined, request.params)
       return successResponse(request.id, meta, result)

@@ -35,6 +35,7 @@ import { CLIPBOARD_METHODS } from './clipboard'
 import { HOST_CAPABILITY_METHODS } from './host-capabilities'
 import { EMULATOR_METHODS } from './emulator'
 import { PAIRING_METHODS } from './pairing'
+import { LOCAL_FORK_UPDATE_METHODS } from './local-fork-update'
 
 // Why: a flat manifest keeps registration order explicit and provides one
 // grep-point for "what methods does the RPC server expose?" — useful when
@@ -75,5 +76,6 @@ export const ALL_RPC_METHODS: readonly RpcAnyMethod[] = [
   ...CLIENT_EVENT_METHODS,
   ...CLIENT_UI_METHODS,
   ...EMULATOR_METHODS,
-  ...PAIRING_METHODS
+  ...PAIRING_METHODS,
+  ...LOCAL_FORK_UPDATE_METHODS
 ]
