@@ -49,6 +49,7 @@ const DEFAULT_WS_PORT = 6768
 type OrcaRuntimeRpcServerOptions = {
   runtime: OrcaRuntimeService
   userDataPath: string
+  requestLocalForkUpdateQuit?: () => Promise<void>
   pid?: number
   platform?: NodeJS.Platform
   enableWebSocket?: boolean
@@ -450,6 +451,7 @@ export class OrcaRuntimeRpcServer {
   private readonly runtime: OrcaRuntimeService
   private readonly dispatcher: RpcDispatcher
   private readonly userDataPath: string
+  private readonly requestLocalForkUpdateQuit: (() => Promise<void>) | undefined
   private readonly pid: number
   private readonly platform: NodeJS.Platform
   private readonly enableWebSocket: boolean
@@ -483,6 +485,7 @@ export class OrcaRuntimeRpcServer {
   constructor({
     runtime,
     userDataPath,
+    requestLocalForkUpdateQuit,
     pid = process.pid,
     platform = process.platform,
     enableWebSocket = false,
@@ -495,6 +498,7 @@ export class OrcaRuntimeRpcServer {
     this.runtime = runtime
     this.dispatcher = new RpcDispatcher({ runtime })
     this.userDataPath = userDataPath
+    this.requestLocalForkUpdateQuit = requestLocalForkUpdateQuit
     this.pid = pid
     this.platform = platform
     this.enableWebSocket = enableWebSocket
@@ -1004,7 +1008,10 @@ export class OrcaRuntimeRpcServer {
 
     try {
       return await this.dispatcher.dispatch(request, {
-        signal: longPoll ? context?.signal : undefined
+        signal: longPoll ? context?.signal : undefined,
+        // Why: only the 0o600 local socket receives the lifecycle callback;
+        // paired WebSocket and desktop IPC dispatchers cannot trigger app quit.
+        requestLocalForkUpdateQuit: this.requestLocalForkUpdateQuit
       })
     } finally {
       if (longPoll) {

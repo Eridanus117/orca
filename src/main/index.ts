@@ -55,7 +55,11 @@ import {
   registerAppMenu,
   rebuildAppMenu
 } from './menu/register-app-menu'
-import { checkForUpdatesFromMenu, isQuittingForUpdate } from './updater'
+import {
+  checkForUpdatesFromMenu,
+  isQuittingForUpdate,
+  requestLocalForkUpdateQuit
+} from './updater'
 import type { UpdateCheckOptions } from '../shared/types'
 import { recordUpdaterLifecycle } from './updater-lifecycle-diagnostics'
 import {
@@ -2232,6 +2236,7 @@ app.whenReady().then(async () => {
   migrateMobilePairingDataToCanonicalUserDataPath(app.getPath('userData'))
   runtimeRpc = new OrcaRuntimeRpcServer({
     runtime,
+    requestLocalForkUpdateQuit,
     // Why: mobile pairing (DeviceRegistry + E2EE keypair + runtime metadata)
     // must share the stable path captured before app.setName(), not a late
     // app.getPath('userData') that resolves elsewhere and drops paired devices

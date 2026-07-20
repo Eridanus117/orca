@@ -220,6 +220,29 @@ describe('updater', () => {
     expect(powerMonitorOnMock).not.toHaveBeenCalled()
   })
 
+  it('uses normal app quit for local Fork updates without killing daemon PTYs', async () => {
+    vi.useFakeTimers()
+    isLocalForkDistributionMock.mockReturnValue(true)
+    const onBeforeQuit = vi.fn()
+    const mainWindow = { webContents: { send: vi.fn() } }
+    const { setupAutoUpdater, requestLocalForkUpdateQuit, isQuittingForUpdate } =
+      await import('./updater')
+
+    setupAutoUpdater(mainWindow as never, { onBeforeQuit })
+    await requestLocalForkUpdateQuit()
+    await requestLocalForkUpdateQuit()
+
+    expect(onBeforeQuit).toHaveBeenCalledTimes(1)
+    expect(isQuittingForUpdate()).toBe(true)
+    expect(killAllPtyMock).not.toHaveBeenCalled()
+    expect(appMock.quit).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(appMock.quit).toHaveBeenCalledTimes(1)
+    expect(killAllPtyMock).not.toHaveBeenCalled()
+  })
+
   it('deduplicates identical check errors from the event and rejected promise', async () => {
     autoUpdaterMock.checkForUpdates.mockImplementation(() => {
       autoUpdaterMock.emit('checking-for-update')

@@ -51,6 +51,9 @@ export type RpcRequest = {
 
 export type RpcContext = {
   runtime: OrcaRuntimeService
+  // Why: the local update installer needs Electron's normal quit pipeline,
+  // but remote and renderer RPC transports must never gain process control.
+  requestLocalForkUpdateQuit?: () => Promise<void>
   // Why: long-poll handlers (e.g. orchestration.check with wait=true) need to
   // observe the underlying socket's lifetime so they can release their slot
   // and resolve their inner waiters immediately when a client disconnects
