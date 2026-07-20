@@ -14,6 +14,12 @@ import {
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { createForkBundleValidator } from './orca-fork-bundle-validation.mjs'
+import {
+  optionalForkSigningIdentity,
+  resolveCurrentForkSigningIdentity,
+  setupForkSigningIdentity
+} from './orca-fork-code-signing.mjs'
 import {
   abortPreparedUpdate,
   assertAllOrcaAppsStopped,
@@ -23,10 +29,7 @@ import {
   prepareUpdateHandoff,
   spawnUpdateFinalizer
 } from './orca-fork-update-handoff.mjs'
-import {
-  readActiveForkRuntime,
-  requestGracefulUpdateQuit
-} from './orca-fork-update-runtime.mjs'
+import { readActiveForkRuntime, requestGracefulUpdateQuit } from './orca-fork-update-runtime.mjs'
 import {
   buildReleaseSyncDryRunPlan,
   parseCommand,
@@ -93,9 +96,14 @@ function captureCombined(command, args, options = {}) {
   return `${result.stdout ?? ''}\n${result.stderr ?? ''}`.trim()
 }
 
-function timestamp() {
-  return new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-')
-}
+const validateBundle = createForkBundleValidator({
+  distribution,
+  run,
+  capture,
+  captureCombined
+})
+
+const timestamp = () => new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-')
 
 function ensureMac() {
   if (process.platform !== 'darwin') {
@@ -271,28 +279,6 @@ function findBuiltApp(directory = join(projectDir, 'dist'), depth = 0) {
   return null
 }
 
-function validateBundle(appPath) {
-  const plist = join(appPath, 'Contents', 'Info.plist')
-  const resources = join(appPath, 'Contents', 'Resources')
-  const bundleId = capture('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', plist])
-  const executable = capture('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleExecutable', plist])
-  if (bundleId !== distribution.appId) {
-    throw new Error(`Unexpected bundle id: ${bundleId || '<missing>'}`)
-  }
-  if (executable !== distribution.executableName) {
-    throw new Error(`Unexpected executable: ${executable || '<missing>'}`)
-  }
-  for (const required of [
-    join(resources, 'orca-fork-distribution.json'),
-    join(resources, 'bin', 'orca')
-  ]) {
-    if (!existsSync(required)) {
-      throw new Error(`Missing fork bundle resource: ${required}`)
-    }
-  }
-  run('codesign', ['--verify', '--deep', '--strict', appPath])
-}
-
 function buildBundle() {
   const node24Bin = resolveNode24Bin()
   if (!node24Bin) {
@@ -301,6 +287,7 @@ function buildBundle() {
     )
   }
   const sdkRoot = resolveMacSdkRoot()
+  const signingIdentity = resolveCurrentForkSigningIdentity(process.env.ORCA_FORK_SIGN_IDENTITY)
   const buildEnv = {
     ...process.env,
     PATH: `${node24Bin}:${process.env.PATH ?? ''}`,
@@ -310,9 +297,7 @@ function buildBundle() {
     CC: process.env.CC ?? '/usr/bin/clang',
     CXX: process.env.CXX ?? '/usr/bin/clang++',
     ORCA_LOCAL_FORK_BUILD: '1',
-    ...(process.env.ORCA_FORK_SIGN_IDENTITY
-      ? { CSC_NAME: process.env.ORCA_FORK_SIGN_IDENTITY }
-      : {})
+    CSC_NAME: signingIdentity
   }
   run('pnpm', ['run', 'build:desktop'], { env: buildEnv })
   run('pnpm', ['run', 'build:computer-macos'], { env: buildEnv })
@@ -415,7 +400,9 @@ function replaceFromSnapshot(source, target, present, label) {
     if (label === 'profile') {
       cleanTransientProfileState(staging)
     } else {
-      validateBundle(staging)
+      // Why: the first post-migration backup is ad-hoc; rollback must remain
+      // available even though it can require granting TCC permissions again.
+      validateBundle(staging, { requireStableSignature: false })
     }
   }
   if (existsSync(target)) {
@@ -467,6 +454,13 @@ export function buildDryRunPlan(command, from, base) {
       return [
         'Inspect source, installed app, shared profile, legacy CLI, signing, and pending transaction.'
       ]
+    case 'signing-setup':
+      return [
+        'Back up current user trust settings.',
+        'Create a non-extractable local code-signing identity in the login Keychain.',
+        'Trust that identity only for code signing.',
+        'Verify macOS reports it as a valid signing identity.'
+      ]
     case 'sync':
       return buildReleaseSyncDryRunPlan(from, base)
     case 'install':
@@ -512,6 +506,15 @@ function printStatus() {
   const signature = existsSync(paths.installedApp)
     ? captureCombined('codesign', ['-dv', '--verbose=2', paths.installedApp])
     : ''
+  const designatedRequirement = existsSync(paths.installedApp)
+    ? captureCombined('codesign', ['-d', '-r-', paths.installedApp])
+    : ''
+  const signingIdentities = captureCombined('security', [
+    'find-identity',
+    '-v',
+    '-p',
+    'codesigning'
+  ])
   const transaction = join(paths.state, 'transaction.json')
   console.log(`source: ${projectDir}`)
   console.log(`branch: ${branch || '<detached>'}`)
@@ -526,7 +529,16 @@ function printStatus() {
   console.log(`legacy fork CLI: ${existsSync(paths.legacyForkCli) ? paths.legacyForkCli : 'none'}`)
   console.log(`stale app transactions: ${findStaleInstallArtifacts().join(', ') || 'none'}`)
   console.log(`pending transaction: ${existsSync(transaction) ? transaction : 'none'}`)
+  console.log(
+    `build signing identity: ${
+      optionalForkSigningIdentity({
+        explicitIdentity: process.env.ORCA_FORK_SIGN_IDENTITY,
+        identities: signingIdentities
+      }) ?? '<run signing-setup --apply>'
+    }`
+  )
   console.log(`signature: ${signature || '<none; local ad-hoc builds may require TCC again>'}`)
+  console.log(`designated requirement: ${designatedRequirement || '<none>'}`)
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -565,6 +577,18 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (command === 'sync') {
     syncForkFromRelease({ from, base, run, capture })
+    return
+  }
+  if (command === 'signing-setup') {
+    const setup = setupForkSigningIdentity({
+      explicitIdentity: process.env.ORCA_FORK_SIGN_IDENTITY,
+      stateDirectory: paths.state,
+      backupTimestamp: timestamp()
+    })
+    if (setup.trustBackupPath) {
+      console.log(`Created stable signing identity: ${setup.identity}`)
+      console.log(`Trust settings backup: ${setup.trustBackupPath}`)
+    }
     return
   }
   if (command === 'install') {

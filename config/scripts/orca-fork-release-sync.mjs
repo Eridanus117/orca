@@ -1,4 +1,4 @@
-const COMMANDS = new Set(['status', 'sync', 'install', 'update', 'rollback'])
+const COMMANDS = new Set(['status', 'signing-setup', 'sync', 'install', 'update', 'rollback'])
 const RELEASE_TAG_PATTERN = /^v\d+\.\d+\.\d+(?:-rc\.\d+)?$/
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 
