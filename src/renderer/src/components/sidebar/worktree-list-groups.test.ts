@@ -3278,41 +3278,49 @@ describe('project groups', () => {
       [root, child, unrelated].map((candidate) => [candidate.id, candidate])
     )
 
-    const rows = buildRows(
-      'repo',
-      [root, child, unrelated],
-      new Map([
-        [centerRepo.id, centerRepo],
-        [sharedRepo.id, sharedRepo]
-      ]),
-      null,
-      new Set(),
-      undefined,
-      undefined,
-      undefined,
-      { [child.id]: lineage },
-      worktreeMap,
-      true,
-      undefined,
-      [group],
-      new Set([centerRepo.id, sharedRepo.id]),
-      new Map(),
-      new Map(),
-      [],
-      undefined,
-      [folderWorkspace],
-      undefined,
-      undefined,
-      undefined,
-      { [workspaceLineage.childWorkspaceKey]: workspaceLineage }
-    )
+    const sectionKey = `folder-workspace:${folderWorkspace.id}`
+    const buildTaskGroupRows = (collapsedGroups: Set<string>) =>
+      buildRows(
+        'repo',
+        [root, child, unrelated],
+        new Map([
+          [centerRepo.id, centerRepo],
+          [sharedRepo.id, sharedRepo]
+        ]),
+        null,
+        collapsedGroups,
+        undefined,
+        undefined,
+        undefined,
+        { [child.id]: lineage },
+        worktreeMap,
+        true,
+        undefined,
+        [group],
+        new Set([centerRepo.id, sharedRepo.id]),
+        new Map(),
+        new Map(),
+        [],
+        undefined,
+        [folderWorkspace],
+        undefined,
+        undefined,
+        undefined,
+        { [workspaceLineage.childWorkspaceKey]: workspaceLineage }
+      )
+    const rows = buildTaskGroupRows(new Set())
 
     const itemRows = rows.filter((row) => row.type === 'item')
+    expect(rows.find((row) => row.type === 'folder-workspace')).toMatchObject({
+      key: sectionKey,
+      attachedWorktreeIds: [root.id, child.id],
+      attachmentsCollapsed: false
+    })
     expect(itemRows).toMatchObject([
       {
         worktree: { id: root.id },
         repo: { id: centerRepo.id },
-        sectionKey: `folder-workspace:${folderWorkspace.id}`,
+        sectionKey,
         folderWorkspaceId: folderWorkspace.id,
         depth: 0,
         groupDepth: 2
@@ -3320,7 +3328,7 @@ describe('project groups', () => {
       {
         worktree: { id: child.id },
         repo: { id: sharedRepo.id },
-        sectionKey: `folder-workspace:${folderWorkspace.id}`,
+        sectionKey,
         folderWorkspaceId: folderWorkspace.id,
         depth: 1,
         groupDepth: 2
@@ -3332,6 +3340,19 @@ describe('project groups', () => {
     ])
     expect(itemRows.filter((row) => row.worktree.id === root.id)).toHaveLength(1)
     expect(itemRows.filter((row) => row.worktree.id === child.id)).toHaveLength(1)
+
+    const collapsedRows = buildTaskGroupRows(new Set([sectionKey]))
+    expect(collapsedRows.find((row) => row.type === 'folder-workspace')).toMatchObject({
+      key: sectionKey,
+      attachedWorktreeIds: [root.id, child.id],
+      attachmentsCollapsed: true
+    })
+    expect(collapsedRows.filter((row) => row.type === 'item')).toMatchObject([
+      {
+        worktree: { id: unrelated.id },
+        sectionKey: `repo:${centerRepo.id}`
+      }
+    ])
   })
 
   it('preserves nested Project Group depth for folder workspace rows', () => {

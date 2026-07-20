@@ -127,6 +127,8 @@ function folderWorkspaceRow(
     key: 'folder-workspace:folder-1',
     folderWorkspace,
     projectGroup,
+    attachedWorktreeIds: [],
+    attachmentsCollapsed: false,
     depth: 0,
     groupDepth: 0
   }

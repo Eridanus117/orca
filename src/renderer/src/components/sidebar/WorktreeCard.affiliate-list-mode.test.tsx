@@ -77,7 +77,9 @@ vi.mock('./CacheTimer', () => ({
 }))
 
 vi.mock('./WorktreeCardAgents', () => ({
-  default: () => <div data-testid="inline-agents" />
+  default: ({ worktreeId }: { worktreeId: string }) => (
+    <div data-testid="inline-agents" data-worktree-id={worktreeId} />
+  )
 }))
 
 vi.mock('./SshDisconnectedDialog', () => ({
@@ -227,5 +229,28 @@ describe('WorktreeCard affiliate list mode', () => {
     })
 
     expect(container.querySelector('[data-testid="inline-agents"]')).not.toBeNull()
+  })
+
+  it('projects child workspace agents into a collapsed task group card', () => {
+    worktreeCardProperties = ['status', 'inline-agents']
+
+    act(() => {
+      root.render(
+        <WorktreeCard
+          worktree={{ ...makeWorktree(), id: 'folder:task-1' }}
+          repo={undefined}
+          isActive={false}
+          flushSurface
+          lineageCollapsed
+          collapsedLineageAgentWorktreeIds={['worktree-a', 'worktree-b']}
+        />
+      )
+    })
+
+    expect(
+      [...container.querySelectorAll('[data-testid="inline-agents"]')].map((element) =>
+        element.getAttribute('data-worktree-id')
+      )
+    ).toEqual(['folder:task-1', 'worktree-a', 'worktree-b'])
   })
 })

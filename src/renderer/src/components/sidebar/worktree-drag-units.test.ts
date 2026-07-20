@@ -11,13 +11,27 @@ function header(key: string): { type: 'header'; key: string } {
 function item(
   id: string,
   depth = 0,
-  sectionKey = 'all'
-): { type: 'item'; worktree: { id: string }; depth: number; sectionKey: string } {
-  return { type: 'item', worktree: { id }, depth, sectionKey }
+  sectionKey = 'all',
+  folderWorkspaceId?: string
+): {
+  type: 'item'
+  worktree: { id: string }
+  depth: number
+  sectionKey: string
+  folderWorkspaceId?: string
+} {
+  return { type: 'item', worktree: { id }, depth, sectionKey, folderWorkspaceId }
 }
 
 function importedCard(): { type: 'imported-worktrees-card' } {
   return { type: 'imported-worktrees-card' }
+}
+
+function folderWorkspace(id: string): {
+  type: 'folder-workspace'
+  folderWorkspace: { id: string }
+} {
+  return { type: 'folder-workspace', folderWorkspace: { id } }
 }
 
 describe('getWorktreeDragUnitGroups', () => {
@@ -105,6 +119,26 @@ describe('getWorktreeDragUnitGroups', () => {
         units: [
           { worktreeId: 'pinned-copy', worktreeIds: ['pinned-copy'] },
           { worktreeId: 'other', worktreeIds: ['other'] }
+        ]
+      }
+    ])
+  })
+
+  it('treats each folder task group as one drag unit', () => {
+    expect(
+      getWorktreeDragUnitGroups([
+        header('project-group:logistics'),
+        folderWorkspace('freight-45'),
+        item('freight-45-center', 0, 'folder-workspace:freight-45', 'freight-45'),
+        folderWorkspace('freight-49')
+      ])
+    ).toEqual([
+      {
+        key: 'project-group:logistics',
+        worktreeIds: ['folder:freight-45', 'folder:freight-49'],
+        units: [
+          { worktreeId: 'folder:freight-45', worktreeIds: ['folder:freight-45'] },
+          { worktreeId: 'folder:freight-49', worktreeIds: ['folder:freight-49'] }
         ]
       }
     ])

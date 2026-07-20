@@ -1,5 +1,6 @@
 import type { WorktreeDragGroup } from './worktree-manual-order'
 import { ALL_GROUP_KEY, PINNED_GROUP_KEY } from './worktree-list-groups'
+import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
 
 export type WorktreeDragUnitGroup = WorktreeDragGroup & {
   units: { worktreeId: string; worktreeIds: string[] }[]
@@ -8,11 +9,17 @@ export type WorktreeDragUnitGroup = WorktreeDragGroup & {
 type WorktreeDragUnitRow =
   | { type: 'host-header' }
   | { type: 'header'; key: string }
-  | { type: 'item'; worktree: { id: string }; depth: number; sectionKey: string }
+  | {
+      type: 'item'
+      worktree: { id: string }
+      depth: number
+      sectionKey: string
+      folderWorkspaceId?: string
+    }
   | { type: 'imported-worktrees-card' }
   | { type: 'new-external-worktrees-inbox' }
   | { type: 'pending-creation' }
-  | { type: 'folder-workspace' }
+  | { type: 'folder-workspace'; folderWorkspace: { id: string } }
 
 export function getWorktreeDragUnitGroups(
   rows: readonly WorktreeDragUnitRow[]
@@ -39,12 +46,27 @@ export function getWorktreeDragUnitGroups(
       row.type === 'host-header' ||
       row.type === 'imported-worktrees-card' ||
       row.type === 'new-external-worktrees-inbox' ||
-      row.type === 'pending-creation' ||
-      row.type === 'folder-workspace'
+      row.type === 'pending-creation'
     ) {
       continue
     }
+    if (row.type === 'folder-workspace') {
+      if (!current) {
+        current = { key: ALL_GROUP_KEY, units: [] }
+        groups.push({
+          key: current.key,
+          units: current.units,
+          worktreeIds: current.units.map((unit) => unit.worktreeId)
+        })
+      }
+      const worktreeId = folderWorkspaceKey(row.folderWorkspace.id)
+      current.units.push({ worktreeId, worktreeIds: [worktreeId] })
+      continue
+    }
     if (row.sectionKey === PINNED_GROUP_KEY && naturalWorktreeIds.has(row.worktree.id)) {
+      continue
+    }
+    if (row.folderWorkspaceId) {
       continue
     }
     if (!current) {

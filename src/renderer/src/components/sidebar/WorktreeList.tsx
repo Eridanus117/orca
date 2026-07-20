@@ -276,7 +276,11 @@ import { buildSidebarHostOptions } from './sidebar-host-options'
 import { HostSectionHeaderMenu } from './HostSectionHeaderMenu'
 import { ProjectHeaderActions } from './ProjectHeaderActions'
 import { translate } from '@/i18n/i18n'
-import { folderWorkspaceKey, getActiveSidebarWorkspaceId } from '../../../../shared/workspace-scope'
+import {
+  folderWorkspaceKey,
+  getActiveSidebarWorkspaceId,
+  parseWorkspaceKey
+} from '../../../../shared/workspace-scope'
 import { getHostDisplayLabelOverrides } from '../../../../shared/host-setting-overrides'
 import {
   isConfirmedStaleFolderPathStatus,
@@ -1257,9 +1261,16 @@ export function getWorktreeDragGroups(rows: HostSectionRow[]): WorktreeDragGroup
       row.type === 'host-header' ||
       row.type === 'imported-worktrees-card' ||
       row.type === 'new-external-worktrees-inbox' ||
-      row.type === 'pending-creation' ||
-      row.type === 'folder-workspace'
+      row.type === 'pending-creation'
     ) {
+      continue
+    }
+    if (row.type === 'folder-workspace') {
+      if (!current) {
+        current = { key: ALL_GROUP_KEY, ids: [] }
+        groups.push({ key: current.key, worktreeIds: current.ids })
+      }
+      current.ids.push(folderWorkspaceToWorktree(row.folderWorkspace).id)
       continue
     }
     if (row.folderWorkspaceId) {
@@ -1293,6 +1304,7 @@ export function getWorktreeDragIndexes(rows: readonly HostSectionRow[]): {
   const groupKeyByRowKey = new Map<string, string>()
   const groupIndexByRowKey = new Map<string, number>()
   const groupIndexes = new Map<string, number>()
+  let currentGroupKey = ALL_GROUP_KEY
   const naturalWorktreeIds = new Set(
     rows.flatMap((row) =>
       row.type === 'item' && row.sectionKey !== PINNED_GROUP_KEY ? [row.worktree.id] : []
@@ -1300,7 +1312,16 @@ export function getWorktreeDragIndexes(rows: readonly HostSectionRow[]): {
   )
   for (const row of rows) {
     if (row.type === 'header') {
+      currentGroupKey = row.key
       groupIndexes.set(row.key, 0)
+      continue
+    }
+    if (row.type === 'folder-workspace') {
+      const worktreeId = folderWorkspaceToWorktree(row.folderWorkspace).id
+      const index = groupIndexes.get(currentGroupKey) ?? 0
+      groupKeyByRowKey.set(worktreeId, currentGroupKey)
+      groupIndexByRowKey.set(worktreeId, index)
+      groupIndexes.set(currentGroupKey, index + 1)
       continue
     }
     if (row.type !== 'item') {
@@ -5109,6 +5130,10 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
             if (row.type === 'folder-workspace') {
               const folderWorkspaceRow = row as FolderWorkspaceItemRow
               const folderWorktree = folderWorkspaceToWorktree(folderWorkspaceRow.folderWorkspace)
+              const folderDragGroupKey = groupKeyByRowKey.get(folderWorktree.id)
+              const folderDragGroupIndex = groupIndexByRowKey.get(folderWorktree.id)
+              const folderPreviewOffset =
+                worktreeDragState.previewOffsetsByWorktreeId.get(folderWorktree.id) ?? 0
               const folderWorkspacePathStatus = getCachedFolderWorkspacePathStatus({
                 scope: 'folder-workspace',
                 folderWorkspaceId: folderWorkspaceRow.folderWorkspace.id
@@ -5145,13 +5170,24 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                   aria-current={activeWorktreeId === folderWorktree.id ? 'page' : undefined}
                   data-worktree-id={folderWorktree.id}
                   data-worktree-row-key={folderWorktree.id}
+                  data-worktree-drag-id={folderDragGroupKey ? folderWorktree.id : undefined}
+                  data-worktree-drag-group-key={folderDragGroupKey}
+                  data-worktree-drag-group-index={folderDragGroupIndex}
                   data-worktree-virtual-row
                   data-worktree-virtual-row-key={String(vItem.key)}
                   data-worktree-virtual-row-start={vItem.start}
                   data-index={vItem.index}
                   ref={measureVirtualRowElement}
-                  className="absolute left-0 right-0 top-0"
-                  style={{ transform: getVirtualRowTransform(vItem.start) }}
+                  className={cn(
+                    'absolute left-0 right-0 top-0',
+                    worktreeDragState.draggingWorktreeId !== null &&
+                      'transition-transform duration-150 ease-out will-change-transform',
+                    worktreeDragState.draggingWorktreeId === folderWorktree.id &&
+                      'pointer-events-none opacity-0'
+                  )}
+                  style={{
+                    transform: getWorktreeVirtualRowTransform(vItem.start, folderPreviewOffset)
+                  }}
                   onClickCapture={handleWorktreeRowClickCapture}
                   onPointerDown={(event) =>
                     handleWorktreeRowPointerDown(event, folderWorktree.id, folderWorktree.id)
@@ -5178,6 +5214,22 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                       onSelectionGesture={onSelectionGesture}
                       onContextMenuSelect={onContextMenuSelect}
                       statusPrDisplay={folderPrDisplay}
+                      lineageChildCount={folderWorkspaceRow.attachedWorktreeIds.length}
+                      lineageCollapsed={folderWorkspaceRow.attachmentsCollapsed}
+                      collapsedLineageAgentWorktreeIds={
+                        folderWorkspaceRow.attachmentsCollapsed
+                          ? folderWorkspaceRow.attachedWorktreeIds
+                          : undefined
+                      }
+                      onLineageToggle={
+                        folderWorkspaceRow.attachedWorktreeIds.length > 0
+                          ? (event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              toggleGroupWithScrollAnchor(folderWorkspaceRow.key)
+                            }
+                          : undefined
+                      }
                     />
                     <div className="pointer-events-auto absolute right-3 top-1.5">
                       <FolderPathStatusIndicator status={folderWorkspacePathStatus} />
@@ -5784,6 +5836,14 @@ const WorktreeList = React.memo(function WorktreeList({
       return visibleHostIdSet.has(hostId)
     })
   }, [defaultHostId, folderWorkspaces, projectGroups, visibleHostIdSet])
+  const sidebarWorkspaceMap = useMemo(() => {
+    const next = new Map(worktreeMap)
+    for (const folderWorkspace of visibleFolderWorkspacesForRows) {
+      const folderWorktree = folderWorkspaceToWorktree(folderWorkspace)
+      next.set(folderWorktree.id, folderWorktree)
+    }
+    return next
+  }, [visibleFolderWorkspacesForRows, worktreeMap])
   const repoOrder = useMemo(() => {
     return getLogicalRepoOrderRankById(repos.map((repo) => repo.id))
   }, [repos])
@@ -6475,30 +6535,47 @@ const WorktreeList = React.memo(function WorktreeList({
 
   const moveWorktreeToStatus = useCallback(
     (worktreeId: string, status: WorkspaceStatus) => {
-      const current = worktreeMap.get(worktreeId)
+      const current = sidebarWorkspaceMap.get(worktreeId)
       if (!current || getWorkspaceStatus(current, workspaceStatuses) === status) {
         return
       }
       void updateWorktreeMeta(worktreeId, { workspaceStatus: status })
     },
-    [updateWorktreeMeta, worktreeMap, workspaceStatuses]
+    [sidebarWorkspaceMap, updateWorktreeMeta, workspaceStatuses]
+  )
+
+  const updateSidebarWorkspacesMeta = useCallback(
+    (updates: ReadonlyMap<string, Partial<WorktreeMeta>>) => {
+      const regularUpdates = new Map<string, Partial<WorktreeMeta>>()
+      for (const [worktreeId, update] of updates) {
+        if (parseWorkspaceKey(worktreeId)?.type === 'folder') {
+          void updateWorktreeMeta(worktreeId, update)
+        } else {
+          regularUpdates.set(worktreeId, update)
+        }
+      }
+      if (regularUpdates.size > 0) {
+        void updateWorktreesMeta(regularUpdates)
+      }
+    },
+    [updateWorktreeMeta, updateWorktreesMeta]
   )
 
   const moveWorktreesToStatus = useCallback(
     (worktreeIds: readonly string[], status: WorkspaceStatus) => {
       const updates = new Map<string, { workspaceStatus: WorkspaceStatus }>()
       for (const worktreeId of worktreeIds) {
-        const current = worktreeMap.get(worktreeId)
+        const current = sidebarWorkspaceMap.get(worktreeId)
         if (!current || getWorkspaceStatus(current, workspaceStatuses) === status) {
           continue
         }
         updates.set(worktreeId, { workspaceStatus: status })
       }
       if (updates.size > 0) {
-        void updateWorktreesMeta(updates)
+        updateSidebarWorkspacesMeta(updates)
       }
     },
-    [updateWorktreesMeta, worktreeMap, workspaceStatuses]
+    [sidebarWorkspaceMap, updateSidebarWorkspacesMeta, workspaceStatuses]
   )
 
   const moveWorktreesToStatusAtIndex = useCallback(
@@ -6512,7 +6589,7 @@ const WorktreeList = React.memo(function WorktreeList({
       const rankByWorktreeId = new Map<string, number>()
       for (const group of args.groups) {
         for (const worktreeId of group.worktreeIds) {
-          const worktree = worktreeMap.get(worktreeId)
+          const worktree = sidebarWorkspaceMap.get(worktreeId)
           if (worktree) {
             rankByWorktreeId.set(worktreeId, worktree.manualOrder ?? worktree.sortOrder)
           }
@@ -6528,7 +6605,7 @@ const WorktreeList = React.memo(function WorktreeList({
       })
       const updates = new Map<string, Partial<WorktreeMeta>>()
       for (const worktreeId of args.worktreeIds) {
-        const current = worktreeMap.get(worktreeId)
+        const current = sidebarWorkspaceMap.get(worktreeId)
         if (!current) {
           continue
         }
@@ -6554,9 +6631,9 @@ const WorktreeList = React.memo(function WorktreeList({
       if (order.changed) {
         setSortBy('manual')
       }
-      void updateWorktreesMeta(updates)
+      updateSidebarWorkspacesMeta(updates)
     },
-    [setSortBy, updateWorktreesMeta, worktreeMap, workspaceStatuses]
+    [setSortBy, sidebarWorkspaceMap, updateSidebarWorkspacesMeta, workspaceStatuses]
   )
 
   const pinWorktree = useCallback(
@@ -6583,7 +6660,7 @@ const WorktreeList = React.memo(function WorktreeList({
       const rankByWorktreeId = new Map<string, number>()
       for (const group of args.groups) {
         for (const worktreeId of group.worktreeIds) {
-          const worktree = worktreeMap.get(worktreeId)
+          const worktree = sidebarWorkspaceMap.get(worktreeId)
           if (worktree) {
             rankByWorktreeId.set(worktreeId, worktree.manualOrder ?? worktree.sortOrder)
           }
@@ -6601,15 +6678,15 @@ const WorktreeList = React.memo(function WorktreeList({
       // Switch modes only after a real move so accidental click-drags do not
       // alter the user's selected sort.
       setSortBy('manual')
-      void updateWorktreesMeta(result.updates)
+      updateSidebarWorkspacesMeta(result.updates)
     },
-    [setSortBy, updateWorktreesMeta, worktreeMap]
+    [setSortBy, sidebarWorkspaceMap, updateSidebarWorkspacesMeta]
   )
 
   const shouldShowWorkspaceBoardDropIndicator = useCallback(
     (worktreeIds: readonly string[], status: WorkspaceStatus) => {
       const sourceGroupKeys = worktreeIds.flatMap((worktreeId) => {
-        const worktree = worktreeMap.get(worktreeId)
+        const worktree = sidebarWorkspaceMap.get(worktreeId)
         return worktree ? [getWorkspaceStatus(worktree, workspaceStatuses)] : []
       })
       return shouldWriteManualOrderForGroupDrop({
@@ -6618,7 +6695,7 @@ const WorktreeList = React.memo(function WorktreeList({
         targetGroupKey: status
       })
     },
-    [sortBy, worktreeMap, workspaceStatuses]
+    [sidebarWorkspaceMap, sortBy, workspaceStatuses]
   )
 
   const dropWorktreesOnWorkspaceBoard = useCallback(
@@ -6630,7 +6707,7 @@ const WorktreeList = React.memo(function WorktreeList({
     }) => {
       const result = buildWorkspaceKanbanSidebarDropUpdates({
         ...args,
-        worktreeById: worktreeMap,
+        worktreeById: sidebarWorkspaceMap,
         workspaceStatuses,
         sortBy,
         now: Date.now()
@@ -6644,9 +6721,9 @@ const WorktreeList = React.memo(function WorktreeList({
         setSortBy('manual')
       }
       useAppStore.getState().recordFeatureInteraction('workspace-board-actions')
-      void updateWorktreesMeta(result.updates)
+      updateSidebarWorkspacesMeta(result.updates)
     },
-    [setSortBy, sortBy, updateWorktreesMeta, worktreeMap, workspaceStatuses]
+    [setSortBy, sidebarWorkspaceMap, sortBy, updateSidebarWorkspacesMeta, workspaceStatuses]
   )
 
   // Why: hideDefaultBranchWorkspace is counted as a filter here so the
@@ -6957,7 +7034,7 @@ const WorktreeList = React.memo(function WorktreeList({
         onContextMenuSelect={selectForContextMenu}
         repoMap={repoMap}
         defaultHostId={defaultHostId}
-        worktreeMap={worktreeMap}
+        worktreeMap={sidebarWorkspaceMap}
         worktreeLineageById={worktreeLineageById}
         workspaceLineageByChildKey={workspaceLineageByChildKey}
         repoOrder={repoOrder}
