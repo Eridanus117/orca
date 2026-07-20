@@ -9,6 +9,11 @@ const packageJson = JSON.parse(readFileSync(path.join(projectDir, 'package.json'
 const wrapperPath = path.join(projectDir, 'config', 'scripts', 'orca-dev.mjs')
 
 describe('orca-dev package bin', () => {
+  it('keeps CLI builds free of global command installation side effects', () => {
+    expect(packageJson.scripts['build:cli']).not.toContain('install-dev-cli')
+    expect(packageJson.scripts['build:cli']).not.toContain('/usr/local/bin')
+  })
+
   it('uses a Node entrypoint for cross-platform package installs', () => {
     expect(packageJson.bin['orca-dev']).toBe('./config/scripts/orca-dev.mjs')
     expect(readFileSync(wrapperPath, 'utf8')).toMatch(/^#!\/usr\/bin\/env node\n/)
