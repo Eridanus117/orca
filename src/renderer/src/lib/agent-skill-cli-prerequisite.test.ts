@@ -49,6 +49,31 @@ describe('ensureOrcaCliAvailableForAgentSkillTerminal', () => {
     vi.clearAllMocks()
   })
 
+  it('accepts the read-only shared CLI registered by the official app', async () => {
+    const shared = cliStatus({
+      supported: false,
+      unsupportedReason: 'shared_distribution',
+      detail: 'The shared `orca` command is managed by the official Orca app.'
+    })
+    const getInstallStatus = vi.fn().mockResolvedValue(shared)
+    const install = vi.fn()
+
+    vi.stubGlobal('window', {
+      api: {
+        cli: {
+          getInstallStatus,
+          install
+        }
+      }
+    })
+
+    await expect(ensureOrcaCliAvailableForAgentSkillTerminal()).resolves.toBe(shared)
+
+    expect(install).not.toHaveBeenCalled()
+    expect(toast.warning).not.toHaveBeenCalled()
+    expect(toast.message).not.toHaveBeenCalled()
+  })
+
   it('runs the CLI installer when the command exists but is not visible on PATH', async () => {
     const initial = cliStatus({
       pathConfigured: false,

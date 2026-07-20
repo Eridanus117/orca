@@ -17,6 +17,10 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { CliInstallMethod, CliInstallStatus } from '../../shared/cli-install-types'
+import {
+  getLocalForkDistribution,
+  type LocalForkDistribution
+} from '../startup/local-fork-distribution'
 import { buildAppImageCliWrapper } from './appimage-cli-wrapper'
 import {
   invalidateWindowsUserPathRegistryCache,
@@ -54,6 +58,7 @@ type CliInstallerOptions = {
   windowsEnvironment?: NodeJS.ProcessEnv
   /** Why: AppImage reports a stable outer file path via $APPIMAGE while bundled resources live in an ephemeral FUSE mount. */
   appImagePath?: string | null
+  localForkDistribution?: LocalForkDistribution | null
 }
 
 type InstallSpec = {
@@ -80,6 +85,7 @@ export class CliInstaller {
   private readonly userPathCacheInvalidator: () => void
   private readonly windowsEnvironment: NodeJS.ProcessEnv
   private readonly appImagePath: string | null
+  private readonly localForkDistribution: LocalForkDistribution | null
 
   private get commandName(): string {
     if (!this.isPackaged && !this.commandPathOverride) {
@@ -105,6 +111,10 @@ export class CliInstaller {
     this.processPathEnv = options.processPathEnv ?? process.env.PATH ?? process.env.Path ?? null
     this.commandPathOverride =
       options.commandPathOverride ?? process.env.ORCA_CLI_INSTALL_PATH ?? null
+    this.localForkDistribution =
+      options.localForkDistribution === undefined
+        ? getLocalForkDistribution()
+        : options.localForkDistribution
     // Why: resolved once at construction — existsSync must not run on every
     // getStatus() call (hot path). /usr/local/bin is absent by default on Apple
     // Silicon Macs (Homebrew moved to /opt/homebrew); fall back to ~/.local/bin
@@ -131,6 +141,16 @@ export class CliInstaller {
   }
 
   async getStatus(): Promise<CliInstallStatus> {
+    const status = await this.getMutableDistributionStatus()
+    return this.localForkDistribution ? this.asSharedDistributionStatus(status) : status
+  }
+
+  /**
+   * Resolves the normal Orca CLI registration state.
+   *
+   * @returns The mutable registration status used by the official distribution.
+   */
+  private async getMutableDistributionStatus(): Promise<CliInstallStatus> {
     const defaultSpec = this.resolveInstallSpec()
     if (!defaultSpec) {
       return {
@@ -186,6 +206,7 @@ export class CliInstaller {
   }
 
   async install(): Promise<CliInstallStatus> {
+    this.assertCliMutationAllowed()
     const status = await this.getStatus()
     if (!status.supported || !status.commandPath || !status.launcherPath || !status.installMethod) {
       throw new Error(status.detail ?? 'CLI registration is unavailable on this build.')
@@ -224,6 +245,7 @@ export class CliInstaller {
   }
 
   async remove(): Promise<CliInstallStatus> {
+    this.assertCliMutationAllowed()
     const status = await this.getStatus()
     if (!status.supported || !status.commandPath || !status.launcherPath || !status.installMethod) {
       return status
@@ -801,6 +823,42 @@ export class CliInstaller {
         samePathEntry('win32', entry, pathDirectory, this.windowsEnvironment, result.expandable)
       ),
       detail: null
+    }
+  }
+
+  /**
+   * Makes the shared logical command visible without allowing the Fork to
+   * replace or remove the official app's global registration.
+   *
+   * @param status Registration state resolved against the Fork's bundled launcher.
+   * @returns A read-only status for the shared `orca` command.
+   */
+  private asSharedDistributionStatus(status: CliInstallStatus): CliInstallStatus {
+    const officialLauncherIsActive =
+      status.state === 'stale' &&
+      status.currentTarget !== null &&
+      /(?:^|[/\\])Orca\.app[/\\]Contents[/\\]Resources[/\\]bin[/\\]orca$/u.test(
+        status.currentTarget
+      )
+    const state = officialLauncherIsActive ? 'installed' : status.state
+    return {
+      ...status,
+      supported: false,
+      state,
+      unsupportedReason: 'shared_distribution',
+      detail:
+        state === 'installed'
+          ? 'The shared `orca` command is managed by the official Orca app.'
+          : 'Register the shared `orca` command from the official Orca app.'
+    }
+  }
+
+  /**
+   * Prevents the Fork from taking ownership of the canonical global command.
+   */
+  private assertCliMutationAllowed(): void {
+    if (this.localForkDistribution) {
+      throw new Error('Manage the shared `orca` command from the official Orca app.')
     }
   }
 

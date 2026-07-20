@@ -72,6 +72,56 @@ describe('CliInstaller', () => {
     vi.restoreAllMocks()
   })
 
+  it.skipIf(process.platform === 'win32')(
+    'recognizes the official shared command but refuses to mutate it from the Fork',
+    async () => {
+      const fixture = await makeFixture()
+      const homePath = join(fixture.root, 'home')
+      const resourcesPath = await createPackagedMacLauncher(fixture.root)
+      const commandDir = join(homePath, '.local', 'bin')
+      const officialLauncher = join(
+        fixture.root,
+        'Applications',
+        'Orca.app',
+        'Contents',
+        'Resources',
+        'bin',
+        'orca'
+      )
+      await mkdir(dirname(officialLauncher), { recursive: true })
+      await writeFile(officialLauncher, '#!/usr/bin/env bash\n', { mode: 0o755 })
+      await mkdir(commandDir, { recursive: true })
+      await symlink(officialLauncher, join(commandDir, 'orca'))
+      const installer = new CliInstaller({
+        platform: 'darwin',
+        isPackaged: true,
+        resourcesPath,
+        homePath,
+        processPathEnv: commandDir,
+        localForkDistribution: {
+          schema: 'orca.local-distribution/v2',
+          kind: 'local-fork',
+          appId: 'com.eridanus117.orca-fork',
+          productName: 'Orca Fork',
+          userDataDirName: 'orca',
+          executableName: 'Orca'
+        }
+      })
+
+      await expect(installer.getStatus()).resolves.toMatchObject({
+        commandName: 'orca',
+        commandPath: join(commandDir, 'orca'),
+        currentTarget: officialLauncher,
+        pathConfigured: true,
+        state: 'installed',
+        supported: false,
+        unsupportedReason: 'shared_distribution'
+      })
+      await expect(installer.install()).rejects.toThrow('official Orca app')
+      await expect(installer.remove()).rejects.toThrow('official Orca app')
+    }
+  )
+
   // Why: this test creates Unix symlinks and shell scripts that only apply on macOS.
   it.skipIf(process.platform === 'win32')(
     'creates a dev launcher and installs a macOS symlink in the requested path',

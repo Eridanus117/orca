@@ -20,3 +20,5 @@ declare const ORCA_POSTHOG_WRITE_KEY: string | null
 // point a packaged build at a staging server without re-running the
 // release pipeline.
 declare const ORCA_DIAGNOSTICS_TOKEN_URL: string | null
+/** True only for the locally maintained Orca Fork distribution build. */
+declare const ORCA_LOCAL_FORK_BUILD: boolean

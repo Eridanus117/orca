@@ -1,0 +1,8 @@
+{
+  "schema": "orca.local-distribution/v2",
+  "kind": "local-fork",
+  "appId": "com.eridanus117.orca-fork",
+  "productName": "Orca Fork",
+  "userDataDirName": "orca",
+  "executableName": "Orca"
+}

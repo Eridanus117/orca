@@ -3,7 +3,7 @@ import { getDevInstanceIdentity } from './dev-instance-identity'
 
 describe('dev-instance-identity', () => {
   it('keeps packaged identity stable', () => {
-    expect(getDevInstanceIdentity(false, {})).toMatchObject({
+    expect(getDevInstanceIdentity(false, {}, null)).toMatchObject({
       name: 'Orca',
       appName: 'Orca',
       isDev: false,
@@ -23,6 +23,28 @@ describe('dev-instance-identity', () => {
     expect(a.appName).toBe('Orca Dev')
     expect(b.appName).toBe('Orca Dev')
     expect(a.appName).not.toBe('Orca')
+  })
+
+  it('uses the independent packaged identity for Orca Fork', () => {
+    expect(
+      getDevInstanceIdentity(
+        false,
+        {},
+        {
+          schema: 'orca.local-distribution/v2',
+          kind: 'local-fork',
+          appId: 'com.eridanus117.orca-fork',
+          productName: 'Orca Fork',
+          userDataDirName: 'orca',
+          executableName: 'Orca'
+        }
+      )
+    ).toMatchObject({
+      name: 'Orca Fork',
+      appName: 'Orca Fork',
+      isDev: false,
+      appUserModelId: 'com.eridanus117.orca-fork'
+    })
   })
 
   it('derives a readable dev label from worktree and branch env', () => {

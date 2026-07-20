@@ -13,6 +13,8 @@ const {
 } = require('./packaged-runtime-node-modules.cjs')
 
 const isMacRelease = process.env.ORCA_MAC_RELEASE === '1'
+const isLocalForkBuild = process.env.ORCA_LOCAL_FORK_BUILD === '1'
+const localForkDistribution = require('../resources/distribution/orca-fork.json')
 const isLinuxArm64Release = process.env.ORCA_LINUX_ARM64_RELEASE === '1'
 const featureWallResources = {
   from: 'resources/onboarding/feature-wall',
@@ -35,7 +37,18 @@ const relayExtraResource = {
 // from package directories where pnpm's symlink farm is absent. Copy the exact
 // runtime dependency closure to Resources/node_modules so bare require() calls
 // do not fall through to a developer checkout's node_modules.
-const commonExtraResources = [relayExtraResource, skillFreshnessResources]
+const commonExtraResources = [
+  relayExtraResource,
+  skillFreshnessResources,
+  ...(isLocalForkBuild
+    ? [
+        {
+          from: 'resources/distribution/orca-fork.json',
+          to: 'orca-fork-distribution.json'
+        }
+      ]
+    : [])
+]
 const macSpeechNativeResource = {
   from: 'node_modules/sherpa-onnx-darwin-${arch}',
   to: 'node_modules/sherpa-onnx-darwin-${arch}'
@@ -51,8 +64,9 @@ const winSpeechNativeResource = {
 
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
-  appId: 'com.stablyai.orca',
-  productName: 'Orca',
+  appId: isLocalForkBuild ? localForkDistribution.appId : 'com.stablyai.orca',
+  productName: isLocalForkBuild ? localForkDistribution.productName : 'Orca',
+  executableName: isLocalForkBuild ? localForkDistribution.executableName : 'Orca',
   directories: {
     buildResources: 'resources/build'
   },
@@ -228,6 +242,12 @@ module.exports = {
     entitlements: 'resources/build/entitlements.mac.plist',
     entitlementsInherit: 'resources/build/entitlements.mac.plist',
     extendInfo: {
+      ...(isLocalForkBuild
+        ? {
+            CFBundleName: localForkDistribution.productName,
+            CFBundleDisplayName: localForkDistribution.productName
+          }
+        : {}),
       NSAppleEventsUsageDescription:
         'Orca allows terminal-launched developer tools to automate local apps when you request it.',
       NSBluetoothAlwaysUsageDescription:
@@ -390,12 +410,16 @@ module.exports = {
   // on Intel Macs. The beforeBuild hook performs Orca's targeted rebuild and
   // returns false so electron-builder does not rebuild optional cpu-features.
   npmRebuild: true,
-  publish: {
-    provider: 'github',
-    owner: 'stablyai',
-    repo: 'orca',
-    releaseType: 'release'
-  }
+  ...(isLocalForkBuild
+    ? {}
+    : {
+        publish: {
+          provider: 'github',
+          owner: 'stablyai',
+          repo: 'orca',
+          releaseType: 'release'
+        }
+      })
 }
 
 function chmodUnixCliLaunchers(resourcesDir, electronPlatformName) {
