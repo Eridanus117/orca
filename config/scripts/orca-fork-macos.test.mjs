@@ -8,11 +8,34 @@ describe('orca-fork-macos', () => {
   })
 
   it('requires an explicit apply flag and keeps source sync separate', () => {
-    expect(parseCommand(['sync', '--apply'])).toEqual({ command: 'sync', apply: true })
-    expect(buildDryRunPlan('sync')).toEqual([
-      'Fetch upstream/main.',
-      'Rebase the current fork branch; abort automatically on conflict.'
+    expect(
+      parseCommand(['sync', '--from', 'v1.4.146-rc.0', '--base', 'v1.4.147', '--apply'])
+    ).toEqual({
+      command: 'sync',
+      apply: true,
+      from: 'v1.4.146-rc.0',
+      base: 'v1.4.147'
+    })
+    expect(buildDryRunPlan('sync', 'v1.4.146-rc.0', 'v1.4.147')).toEqual([
+      'Fetch official release tag v1.4.147.',
+      'Verify v1.4.147 contains current upstream base v1.4.146-rc.0.',
+      'Replay only the Fork patch queue onto the release tag; abort automatically on conflict.'
     ])
+  })
+
+  it('rejects implicit main sync and non-release refs', () => {
+    expect(() => parseCommand(['sync'])).toThrow(
+      'sync requires --from <current-base> --base <release-tag>.'
+    )
+    expect(() =>
+      parseCommand(['sync', '--from', 'v1.4.146-rc.0', '--base', 'upstream/main'])
+    ).toThrow('Unsupported release tag')
+    expect(() => parseCommand(['update', '--base', 'v1.4.147'])).toThrow(
+      '--from and --base are only supported by sync.'
+    )
+    expect(() => parseCommand(['sync', '--from', 'upstream/main', '--base', 'v1.4.147'])).toThrow(
+      'Unsupported current base'
+    )
   })
 
   it('can install a validated existing build without rebuilding it', () => {
