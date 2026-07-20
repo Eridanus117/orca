@@ -156,5 +156,10 @@ export function isStatelessRendererReplyCsiQuery(sequence: string): boolean {
 }
 
 export function isStatefulRendererReplyCsiQuery(sequence: string): boolean {
-  return sequence === '\x1b[6n' || (sequence.startsWith('\x1b[?') && sequence.endsWith('$p'))
+  // Why: Kitty flags belong to the pane's ordered protocol state, so xterm must answer the query.
+  return (
+    sequence === '\x1b[6n' ||
+    sequence === '\x1b[?u' ||
+    (sequence.startsWith('\x1b[?') && sequence.endsWith('$p'))
+  )
 }

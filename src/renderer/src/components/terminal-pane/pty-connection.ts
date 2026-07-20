@@ -5834,7 +5834,8 @@ export function connectPanePty(
       return hiddenRendererStateDirty || !containsStatefulRendererQuery(data)
     }
 
-    function writeHiddenStartupRendererQueries(data: string): void {
+    function writeHiddenStartupRendererQueries(data: string): boolean {
+      const input = hiddenStartupRendererQueryPending + data
       const extracted = extractHiddenStartupRendererQueryData(
         data,
         hiddenStartupRendererQueryPending
@@ -5855,8 +5856,24 @@ export function connectPanePty(
           hiddenStartupRendererQuery: true
         })
       }
+      if (extracted.statefulQueryData && !hiddenRendererStateDirty) {
+        // Why: a clean stateful query can be split across hidden PTY chunks.
+        // The extraction step owns reassembly, so replay the complete sequence
+        // here instead of dropping the suffix-only chunk from the normal path.
+        writePtyOutputToXterm(extracted.statefulQueryData, false, {
+          hiddenStartupRendererQuery: true
+        })
+      }
       // Stateful hidden queries require ordered terminal state. If this pane's
       // hidden xterm is dirty, skipping is safer than sending stale CPR/DECRQM.
+      // Why: a split query prefix changes no terminal state, so its completed
+      // sequence may still be answered from the pane's ordered xterm state.
+      return (
+        extracted.pending === input ||
+        extracted.statelessQueryData === input ||
+        extracted.statefulQueryData === input ||
+        extracted.oscColorQueryData === input
+      )
     }
 
     function takeHiddenStartupRendererQueryPendingForForeground(data: string): {
@@ -5941,10 +5958,12 @@ export function connectPanePty(
     }
 
     function skipHiddenRendererOutput(data: string): void {
-      writeHiddenStartupRendererQueries(data)
+      const preservesRendererState = writeHiddenStartupRendererQueries(data)
       respondToSkippedMode2031Subscribe(data)
       markHiddenOutputRestoreNeeded()
-      hiddenRendererStateDirty = true
+      if (!preservesRendererState) {
+        hiddenRendererStateDirty = true
+      }
       if (hiddenOutputRestoreInFlight) {
         hiddenOutputRestoreFreshSnapshotNeeded = true
       }
@@ -6498,10 +6517,12 @@ export function connectPanePty(
     }
 
     function skipBackgroundAlternateScreenOutput(data: string): void {
-      writeHiddenStartupRendererQueries(data)
+      const preservesRendererState = writeHiddenStartupRendererQueries(data)
       respondToSkippedMode2031Subscribe(data)
       resetSkippedHiddenRendererRiskState()
-      hiddenRendererStateDirty = true
+      if (!preservesRendererState) {
+        hiddenRendererStateDirty = true
+      }
       recordHiddenRendererSkip(data.length)
       const ptyId = transport.getPtyId()
       if (!ptyId || alternateScreenBackgroundRepaintTimer !== null) {
