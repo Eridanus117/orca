@@ -61,6 +61,7 @@ import type {
   FolderWorkspace,
   ProjectGroup,
   ProjectOrderBy,
+  ProjectWorkspaceLayout,
   WorktreeLineage,
   WorktreeMeta,
   WorkspaceLineage,
@@ -624,6 +625,7 @@ type VirtualizedWorktreeViewportProps = {
   groupBy: WorktreeGroupBy
   pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy
   projectOrderBy: ProjectOrderBy
+  projectWorkspaceLayout: ProjectWorkspaceLayout
   toggleGroup: (key: string) => void
   collapsedGroups: Set<string>
   handleCreateForRepo: (projectId: string) => void
@@ -1260,6 +1262,10 @@ export function getWorktreeDragGroups(rows: HostSectionRow[]): WorktreeDragGroup
     ) {
       continue
     }
+    if (row.folderWorkspaceId) {
+      // Why: these rows project lineage under a folder; reorder drops can clear that lineage.
+      continue
+    }
     if (row.sectionKey === PINNED_GROUP_KEY && naturalWorktreeIds.has(row.worktree.id)) {
       continue
     }
@@ -1300,6 +1306,10 @@ export function getWorktreeDragIndexes(rows: readonly HostSectionRow[]): {
     if (row.type !== 'item') {
       continue
     }
+    if (row.folderWorkspaceId) {
+      // Why: no drag index means a projected row cannot start sidebar reordering.
+      continue
+    }
     if (row.sectionKey === PINNED_GROUP_KEY && naturalWorktreeIds.has(row.worktree.id)) {
       continue
     }
@@ -1327,6 +1337,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   groupBy,
   pinnedDisplayPolicy,
   projectOrderBy,
+  projectWorkspaceLayout,
   toggleGroup,
   collapsedGroups,
   handleCreateForRepo,
@@ -1461,7 +1472,8 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   )
   const suppressWorktreeClickUntilRef = useRef(0)
   const hasProjectGroups = projectGroups.length > 0
-  const canReorderRepoHeaders = groupBy === 'repo' && projectOrderBy === 'manual'
+  const canReorderRepoHeaders =
+    groupBy === 'repo' && projectOrderBy === 'manual' && projectWorkspaceLayout === 'repositories'
   const canReorderProjectGroupHeaders = groupBy === 'repo' && hasProjectGroups
   const moveProjectToGroup = useAppStore((s) => s.moveProjectToGroup)
   const updateProjectGroup = useAppStore((s) => s.updateProjectGroup)
@@ -4934,7 +4946,11 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                     onContextMenuSelect={onContextMenuSelect}
                     onCardDragStart={handleWorktreeCardDragStart}
                     onCardDragEnd={clearWorktreeDrag}
-                    hideRepoBadge={groupBy === 'repo'}
+                    hideRepoBadge={
+                      groupBy === 'repo' &&
+                      projectWorkspaceLayout === 'repositories' &&
+                      !itemRow.folderWorkspaceId
+                    }
                     // Why: pinned worktrees mix repos in one section; only that
                     // section needs the leading repo identity chip.
                     hostContextLabel={itemRow.hostContextLabel}
@@ -5281,6 +5297,7 @@ const WorktreeList = React.memo(function WorktreeList({
   const sortBy = useAppStore((s) => s.sortBy)
   const setSortBy = useAppStore((s) => s.setSortBy)
   const projectOrderBy = useAppStore((s) => s.projectOrderBy)
+  const projectWorkspaceLayout = useAppStore((s) => s.projectWorkspaceLayout)
   const showSleepingWorkspaces = useAppStore((s) => s.showSleepingWorkspaces)
   const agentStatusEpoch = useAppStore((s) => (!showSleepingWorkspaces ? s.agentStatusEpoch : 0))
   const hideDefaultBranchWorkspace = useAppStore((s) => s.hideDefaultBranchWorkspace)
@@ -5767,11 +5784,14 @@ const WorktreeList = React.memo(function WorktreeList({
     })
   }, [defaultHostId, projectGroups, visibleHostIdSet])
   const visibleFolderWorkspacesForRows = useMemo(() => {
+    const unarchivedFolderWorkspaces = folderWorkspaces.filter(
+      (folderWorkspace) => !folderWorkspace.isArchived
+    )
     if (!visibleHostIdSet) {
-      return folderWorkspaces
+      return unarchivedFolderWorkspaces
     }
     const projectGroupById = new Map(projectGroups.map((group) => [group.id, group]))
-    return folderWorkspaces.filter((folderWorkspace) => {
+    return unarchivedFolderWorkspaces.filter((folderWorkspace) => {
       const hostId = getFolderWorkspaceExecutionHostIdForRows({
         folderWorkspace,
         projectGroup: projectGroupById.get(folderWorkspace.projectGroupId),
@@ -5897,7 +5917,9 @@ const WorktreeList = React.memo(function WorktreeList({
         visibleFolderWorkspacesForRows,
         hostLabelById,
         defaultHostId,
-        pinnedDisplayPolicy
+        pinnedDisplayPolicy,
+        workspaceLineageByChildKey,
+        projectWorkspaceLayout
       ),
     [
       groupBy,
@@ -5920,7 +5942,9 @@ const WorktreeList = React.memo(function WorktreeList({
       newExternalWorktreesInboxByRepo,
       pendingCreations,
       hostLabelById,
-      pinnedDisplayPolicy
+      pinnedDisplayPolicy,
+      workspaceLineageByChildKey,
+      projectWorkspaceLayout
     ]
   )
   const orderedHostOptions = useMemo(
@@ -6913,6 +6937,7 @@ const WorktreeList = React.memo(function WorktreeList({
         groupBy={groupBy}
         pinnedDisplayPolicy={pinnedDisplayPolicy}
         projectOrderBy={projectOrderBy}
+        projectWorkspaceLayout={projectWorkspaceLayout}
         toggleGroup={toggleGroup}
         collapsedGroups={effectiveCollapsedGroups}
         handleCreateForRepo={handleCreateForRepo}

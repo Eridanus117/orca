@@ -4149,6 +4149,11 @@
             "title": "Card display"
           },
           "09faabd875": "Project order",
+          "projectLayout": "Project layout",
+          "projectLayoutLineage": "Items",
+          "projectLayoutLineageDescription": "Nest related workspaces across repositories.",
+          "projectLayoutRepositories": "Repositories",
+          "projectLayoutRepositoriesDescription": "Keep a separate section for each repository.",
           "7bada3b1ab": "Sort by",
           "dc0bb670bc": "Group by",
           "631b97eea9": "Host scope",

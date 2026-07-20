@@ -3317,6 +3317,7 @@ export type ActiveRightSidebarTab = Exclude<RightSidebarTab, 'search'>
 export type RightSidebarExplorerView = 'files' | 'search'
 
 export type ProjectOrderBy = 'manual' | 'recent'
+export type ProjectWorkspaceLayout = 'repositories' | 'lineage'
 export type WorkspaceHostScope = 'all' | 'local' | `ssh:${string}` | `runtime:${string}`
 export type VisibleWorkspaceHostIds = Exclude<WorkspaceHostScope, 'all'>[] | null
 export type WorkspaceHostOrder = Exclude<WorkspaceHostScope, 'all'>[]
@@ -3357,6 +3358,9 @@ export type PersistedUIState = {
    *  header drag; 'recent' orders by each project's most recent visible
    *  workspace activity. */
   projectOrderBy: ProjectOrderBy
+  /** Layout inside Project Groups. Repositories preserves the traditional
+   *  repo sections; lineage groups related worktrees across repositories. */
+  projectWorkspaceLayout?: ProjectWorkspaceLayout
   /** Deprecated; the Active only filter is retired and ignored on hydration. */
   showActiveOnly: boolean
   /** Hide sleeping/inactive workspaces from workspace navigation. Off by default. */

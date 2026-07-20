@@ -4122,7 +4122,12 @@
           "65a9820bd1": "智能体状态",
           "219ebf1961": "分支名称",
           "automation": "自动化",
-          "folderPathIdentity": "分支 / 文件夹路径"
+          "folderPathIdentity": "分支 / 文件夹路径",
+          "projectLayout": "项目布局",
+          "projectLayoutLineage": "事项",
+          "projectLayoutLineageDescription": "按父子关系嵌套跨仓工作区。",
+          "projectLayoutRepositories": "仓库",
+          "projectLayoutRepositoriesDescription": "为每个仓库保留独立分区。"
         },
         "SshDisconnectedDialog": {
           "ca4a7892af": "正在连接...",

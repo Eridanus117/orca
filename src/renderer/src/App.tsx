@@ -653,6 +653,7 @@ function App(): React.JSX.Element {
   const groupBy = useAppStore((s) => s.groupBy)
   const sortBy = useAppStore((s) => s.sortBy)
   const projectOrderBy = useAppStore((s) => s.projectOrderBy)
+  const projectWorkspaceLayout = useAppStore((s) => s.projectWorkspaceLayout)
   const showSleepingWorkspaces = useAppStore((s) => s.showSleepingWorkspaces)
   const hideDefaultBranchWorkspace = useAppStore((s) => s.hideDefaultBranchWorkspace)
   const hideAutomationGeneratedWorkspaces = useAppStore((s) => s.hideAutomationGeneratedWorkspaces)
@@ -1462,6 +1463,7 @@ function App(): React.JSX.Element {
         groupBy,
         sortBy,
         projectOrderBy,
+        projectWorkspaceLayout,
         showActiveOnly: false,
         hideSleepingWorkspaces: !showSleepingWorkspaces,
         showSleepingWorkspaces,
@@ -1494,6 +1496,7 @@ function App(): React.JSX.Element {
     groupBy,
     sortBy,
     projectOrderBy,
+    projectWorkspaceLayout,
     showSleepingWorkspaces,
     hideDefaultBranchWorkspace,
     hideAutomationGeneratedWorkspaces,

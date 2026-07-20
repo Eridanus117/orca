@@ -1239,6 +1239,27 @@ describe('Store', () => {
     expect(store.getUI().projectOrderBy).toBe('manual')
   })
 
+  it('defaults projectWorkspaceLayout to repositories when absent or invalid', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      ui: { projectWorkspaceLayout: 'bogus' }
+    })
+    const store = await createStore()
+    expect(store.getUI().projectWorkspaceLayout).toBe('repositories')
+  })
+
+  it('preserves and round-trips the lineage projectWorkspaceLayout', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      ui: { projectWorkspaceLayout: 'lineage' }
+    })
+    const store = await createStore()
+    expect(store.getUI().projectWorkspaceLayout).toBe('lineage')
+
+    store.updateUI({ projectWorkspaceLayout: 'repositories' })
+    expect(store.getUI().projectWorkspaceLayout).toBe('repositories')
+  })
+
   // ── 2. Load from existing valid file ─────────────────────────────────
 
   it('reads repos from an existing data file', async () => {

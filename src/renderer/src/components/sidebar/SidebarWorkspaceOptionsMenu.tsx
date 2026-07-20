@@ -21,7 +21,11 @@ import SidebarWorkspaceFilterSection from './SidebarWorkspaceFilterSection'
 import { getSidebarHostVisibilityLabel, shouldShowHostScopeControls } from './sidebar-host-options'
 import { useSidebarHostScopeOptions } from './use-sidebar-host-scope-options'
 import { SidebarHostScopeMenuSection } from './SidebarHostScopeMenuSection'
-import { PROJECT_ORDER_OPTIONS, SORT_OPTIONS } from './sidebar-workspace-option-items'
+import {
+  PROJECT_ORDER_OPTIONS,
+  PROJECT_WORKSPACE_LAYOUT_OPTIONS,
+  SORT_OPTIONS
+} from './sidebar-workspace-option-items'
 import { WorktreeCardDisplayMenuSection } from './WorktreeCardDisplayMenuSection'
 import { translate } from '@/i18n/i18n'
 import { SidebarGroupByToggle } from './SidebarGroupByToggle'
@@ -49,6 +53,8 @@ const SidebarWorkspaceOptionsMenu = React.memo(function SidebarWorkspaceOptionsM
   const setGroupBy = useAppStore((s) => s.setGroupBy)
   const projectOrderBy = useAppStore((s) => s.projectOrderBy)
   const setProjectOrderBy = useAppStore((s) => s.setProjectOrderBy)
+  const projectWorkspaceLayout = useAppStore((s) => s.projectWorkspaceLayout)
+  const setProjectWorkspaceLayout = useAppStore((s) => s.setProjectWorkspaceLayout)
 
   const [open, setOpen] = useState(false)
   const { hostOptions } = useSidebarHostScopeOptions()
@@ -92,6 +98,9 @@ const SidebarWorkspaceOptionsMenu = React.memo(function SidebarWorkspaceOptionsM
   const sortLabel = SORT_OPTIONS.find((opt) => opt.id === sortBy)?.label ?? 'Sort'
   const projectOrderLabel =
     PROJECT_ORDER_OPTIONS.find((opt) => opt.id === projectOrderBy)?.label ?? 'Manual'
+  const projectWorkspaceLayoutLabel =
+    PROJECT_WORKSPACE_LAYOUT_OPTIONS.find((opt) => opt.id === projectWorkspaceLayout)?.label ??
+    'Repositories'
   const hostVisibilityLabel = getSidebarHostVisibilityLabel(visibleWorkspaceHostIds, hostOptions)
 
   return (
@@ -220,8 +229,53 @@ const SidebarWorkspaceOptionsMenu = React.memo(function SidebarWorkspaceOptionsM
           </DropdownMenuSubContent>
         </DropdownMenuSub>
 
-        {/* Why: project order only has a visible effect when grouping by
-            project; hide it in none/status/PR modes to avoid a dead control. */}
+        {/* Why: project layout and order only affect Projects grouping; hide
+            them in none/status/PR modes to avoid dead controls. */}
+        {groupBy === 'repo' && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <span className="flex flex-1 items-center justify-between">
+                <span>
+                  {translate(
+                    'auto.components.sidebar.SidebarWorkspaceOptionsMenu.projectLayout',
+                    'Project layout'
+                  )}
+                </span>
+                <span className="text-[11px] font-medium text-muted-foreground">
+                  {projectWorkspaceLayoutLabel}
+                </span>
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent
+              className="w-52"
+              data-workspace-board-preserve-open={preserveWorkspaceBoardOpen ? '' : undefined}
+            >
+              <DropdownMenuRadioGroup
+                value={projectWorkspaceLayout}
+                onValueChange={(value) =>
+                  setProjectWorkspaceLayout(value as typeof projectWorkspaceLayout)
+                }
+              >
+                {PROJECT_WORKSPACE_LAYOUT_OPTIONS.map((option) => (
+                  <Tooltip key={option.id}>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuRadioItem
+                        value={option.id}
+                        onSelect={(event) => event.preventDefault()}
+                      >
+                        {option.label}
+                      </DropdownMenuRadioItem>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" sideOffset={6}>
+                      {option.description}
+                    </TooltipContent>
+                  </Tooltip>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
+
         {groupBy === 'repo' && (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>

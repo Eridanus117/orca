@@ -1,4 +1,8 @@
-import type { AgentActivityDisplayMode, WorktreeCardProperty } from '../../../../shared/types'
+import type {
+  AgentActivityDisplayMode,
+  ProjectWorkspaceLayout,
+  WorktreeCardProperty
+} from '../../../../shared/types'
 import { TASK_WORKTREE_CARD_PROPERTIES } from '../../../../shared/constants'
 import { translate } from '@/i18n/i18n'
 
@@ -43,6 +47,43 @@ export const CARD_LAYOUT_OPTIONS = [
     }
   }
 ] as const
+
+export const PROJECT_WORKSPACE_LAYOUT_OPTIONS: {
+  id: ProjectWorkspaceLayout
+  label: string
+  description: string
+}[] = [
+  {
+    id: 'lineage',
+    get label() {
+      return translate(
+        'auto.components.sidebar.SidebarWorkspaceOptionsMenu.projectLayoutLineage',
+        'Items'
+      )
+    },
+    get description() {
+      return translate(
+        'auto.components.sidebar.SidebarWorkspaceOptionsMenu.projectLayoutLineageDescription',
+        'Nest related workspaces across repositories.'
+      )
+    }
+  },
+  {
+    id: 'repositories',
+    get label() {
+      return translate(
+        'auto.components.sidebar.SidebarWorkspaceOptionsMenu.projectLayoutRepositories',
+        'Repositories'
+      )
+    },
+    get description() {
+      return translate(
+        'auto.components.sidebar.SidebarWorkspaceOptionsMenu.projectLayoutRepositoriesDescription',
+        'Keep a separate section for each repository.'
+      )
+    }
+  }
+]
 
 export const AGENT_ACTIVITY_DISPLAY_OPTIONS: {
   id: AgentActivityDisplayMode
