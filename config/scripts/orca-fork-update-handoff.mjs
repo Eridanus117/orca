@@ -13,6 +13,7 @@ import { readActiveForkRuntime } from './orca-fork-update-runtime.mjs'
 const TRANSACTION_SCHEMA = 'orca.local-fork-update-handoff/v1'
 const MAIN_EXIT_TIMEOUT_MS = 90_000
 const DESKTOP_EXIT_TIMEOUT_MS = 30_000
+const LEGACY_HELPER_EXIT_TIMEOUT_MS = 5_000
 const RELAUNCH_TIMEOUT_MS = 90_000
 const POLL_INTERVAL_MS = 250
 
@@ -34,6 +35,32 @@ export function isDetachedDaemonProcess(processLine) {
  */
 export function blockingForkDesktopProcesses(processLines) {
   return processLines.filter((line) => !isDetachedDaemonProcess(line))
+}
+
+/**
+ * Matches only a detached legacy Computer Use agent from the target app.
+ *
+ * @param {{ processLine: string, targetApp: string }} options Process and app paths.
+ * @returns {{ pid: number } | null} Matched orphan identity.
+ */
+export function isStrictLegacyComputerHelper({ processLine, targetApp }) {
+  const match = processLine.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/u)
+  if (!match) {
+    return null
+  }
+  const pid = Number(match[1])
+  const ppid = Number(match[2])
+  const command = match[3]
+  const executable = `${targetApp}/Contents/Resources/Orca Computer Use.app/Contents/MacOS/orca-computer-use-macos`
+  if (
+    !Number.isInteger(pid) ||
+    ppid !== 1 ||
+    !command.startsWith(`${executable} --agent `) ||
+    !command.includes(' --token-file ')
+  ) {
+    return null
+  }
+  return { pid }
 }
 
 /**
@@ -93,8 +120,6 @@ export function prepareUpdateHandoff({
   const suffix = `${process.pid}-${Date.now()}`
   const stagingApp = `${installedApp}.staging-${suffix}`
   const previousApp = `${installedApp}.previous-${suffix}`
-  cloneDirectory(builtApp, stagingApp)
-  validateBundle(stagingApp)
   const transaction = {
     schema: TRANSACTION_SCHEMA,
     status: 'prepared',
@@ -107,8 +132,15 @@ export function prepareUpdateHandoff({
     oldPid: runtime.pid,
     oldRuntimeId: runtime.runtimeId
   }
-  writeTransaction(transaction)
-  return transaction
+  try {
+    cloneDirectory(builtApp, stagingApp)
+    validateBundle(stagingApp)
+    writeTransaction(transaction)
+    return transaction
+  } catch (error) {
+    abortPreparedUpdate(transaction)
+    throw error
+  }
 }
 
 /**
@@ -118,6 +150,13 @@ export function prepareUpdateHandoff({
  * @returns {void}
  */
 export function abortPreparedUpdate(transaction) {
+  if (
+    transaction.status !== 'prepared' ||
+    !transaction.stagingApp.startsWith(`${transaction.targetApp}.staging-`) ||
+    !transaction.transactionPath.endsWith('/transaction.json')
+  ) {
+    throw new Error('Refusing to clean unsafe Orca Fork update artifacts.')
+  }
   rmSync(transaction.stagingApp, { recursive: true, force: true })
   rmSync(transaction.transactionPath, { force: true })
 }
@@ -166,28 +205,37 @@ export async function completeUpdateHandoff({
   launchApp
 }) {
   const transaction = readTransaction(transactionPath)
-  await waitUntil(
-    () => !isPidAlive(transaction.oldPid),
-    MAIN_EXIT_TIMEOUT_MS,
-    'Orca Fork did not exit normally; update aborted without sending a signal.'
-  )
-  await waitUntil(
-    () =>
-      bundleProcessLines(appBundleName, capture).every((line) => isDetachedDaemonProcess(line)),
-    DESKTOP_EXIT_TIMEOUT_MS,
-    'Orca Fork desktop helpers did not exit; update aborted without sending a signal.'
-  )
-
-  transaction.status = 'swapping'
-  writeTransaction(transaction)
-  createPairSnapshot('pre-daemon-safe-update')
-  if (existsSync(transaction.targetApp)) {
-    renameSync(transaction.targetApp, transaction.previousApp)
-  }
   try {
+    await waitUntil(
+      () => !isPidAlive(transaction.oldPid),
+      MAIN_EXIT_TIMEOUT_MS,
+      'Orca Fork did not exit normally; update aborted without sending a signal.'
+    )
+    await terminateStrictLegacyComputerHelpers({
+      appBundleName,
+      targetApp: transaction.targetApp,
+      capture
+    })
+    await waitUntil(
+      () =>
+        bundleProcessLines(appBundleName, capture).every((line) => isDetachedDaemonProcess(line)),
+      DESKTOP_EXIT_TIMEOUT_MS,
+      'Orca Fork desktop helpers did not exit; update aborted without sending a signal.'
+    )
+
+    transaction.status = 'swapping'
+    writeTransaction(transaction)
+    createPairSnapshot('pre-daemon-safe-update')
+    if (existsSync(transaction.targetApp)) {
+      renameSync(transaction.targetApp, transaction.previousApp)
+    }
     renameSync(transaction.stagingApp, transaction.targetApp)
     validateBundle(transaction.targetApp)
   } catch (error) {
+    if (transaction.status === 'prepared') {
+      abortPreparedUpdate(transaction)
+      throw error
+    }
     if (!existsSync(transaction.targetApp) && existsSync(transaction.previousApp)) {
       renameSync(transaction.previousApp, transaction.targetApp)
     }
@@ -248,9 +296,33 @@ function writeTransaction(transaction) {
  */
 function bundleProcessLines(appBundleName, capture) {
   const needle = `/${appBundleName}.app/Contents/`
-  return capture('ps', ['-axo', 'pid=,command='])
+  return capture('ps', ['-axo', 'pid=,ppid=,command='])
     .split('\n')
     .filter((line) => line.includes(needle))
+}
+
+/**
+ * Terminates only pre-fix orphan helpers after revalidating their exact pid.
+ *
+ * @param {{ appBundleName: string, targetApp: string, capture: Function }} options Process inputs.
+ * @returns {Promise<void>} Resolves when every matched legacy helper exits.
+ */
+async function terminateStrictLegacyComputerHelpers({ appBundleName, targetApp, capture }) {
+  const matches = bundleProcessLines(appBundleName, capture)
+    .map((processLine) => isStrictLegacyComputerHelper({ processLine, targetApp }))
+    .filter(Boolean)
+  for (const match of matches) {
+    const currentLine = capture('ps', ['-p', String(match.pid), '-o', 'pid=,ppid=,command='])
+    if (!isStrictLegacyComputerHelper({ processLine: currentLine, targetApp })) {
+      continue
+    }
+    process.kill(match.pid, 'SIGTERM')
+    await waitUntil(
+      () => !isPidAlive(match.pid),
+      LEGACY_HELPER_EXIT_TIMEOUT_MS,
+      `Legacy Computer Use helper ${match.pid} did not exit after SIGTERM; update aborted.`
+    )
+  }
 }
 
 /**

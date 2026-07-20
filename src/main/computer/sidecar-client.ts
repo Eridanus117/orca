@@ -1,5 +1,4 @@
 import { fork, type ChildProcess } from 'node:child_process'
-import { join } from 'node:path'
 import type {
   ComputerActionResult,
   ComputerListAppsResult,
@@ -10,6 +9,8 @@ import type {
 import { normalizeComputerActionResult } from './computer-action-verification-normalization'
 import { validateComputerSidecarPasteText } from './computer-sidecar-paste-validation'
 import { RuntimeClientError } from './runtime-client-error'
+import { shutdownComputerSidecarProcess } from './computer-sidecar-graceful-shutdown'
+import { getComputerSidecarEntryPath } from './computer-sidecar-entry-path'
 
 type ComputerSidecarMethod =
   | 'capabilities'
@@ -25,6 +26,7 @@ type ComputerSidecarMethod =
   | 'hotkey'
   | 'pasteText'
   | 'setValue'
+  | 'shutdown'
 
 type ComputerSidecarRequest = {
   id: number
@@ -43,6 +45,7 @@ type PendingRequest = {
 }
 
 const REQUEST_TIMEOUT_MS = 60_000
+const SHUTDOWN_TIMEOUT_MS = 5_000
 let sidecar: ComputerSidecarProcess | null = null
 
 // Why: Node treats unhandled child 'error' events as process exceptions, so
@@ -90,29 +93,18 @@ export function resetComputerSidecarForTest(): void {
   sidecar = null
 }
 
+/** Gracefully stops the shared sidecar before Electron exits. */
+export async function shutdownComputerSidecar(): Promise<void> {
+  const current = sidecar
+  sidecar = null
+  await current?.shutdownGracefully()
+}
+
 function getComputerSidecar(): ComputerSidecarProcess {
   if (!sidecar) {
     sidecar = new ComputerSidecarProcess(getComputerSidecarEntryPath())
   }
   return sidecar
-}
-
-function getComputerSidecarEntryPath(): string {
-  const app = loadElectronApp()
-  const appPath = app?.getAppPath() ?? process.cwd()
-  const isPackaged = app?.isPackaged ?? false
-  // Why: packaged sidecars must be forked from app.asar.unpacked because
-  // ELECTRON_RUN_AS_NODE bypasses Electron's asar require integration.
-  const basePath = isPackaged ? appPath.replace('app.asar', 'app.asar.unpacked') : appPath
-  return join(basePath, 'out', 'main', 'computer-sidecar.js')
-}
-
-function loadElectronApp(): { getAppPath(): string; isPackaged: boolean } | null {
-  try {
-    return require('electron').app
-  } catch {
-    return null
-  }
 }
 
 class ComputerSidecarProcess {
@@ -150,7 +142,11 @@ class ComputerSidecarProcess {
     return result
   }
 
-  private send(method: ComputerSidecarMethod, params: unknown): Promise<unknown> {
+  private send(
+    method: ComputerSidecarMethod,
+    params: unknown,
+    timeoutMs = REQUEST_TIMEOUT_MS
+  ): Promise<unknown> {
     const child = this.ensureStarted()
     if (!child.send) {
       const error = new RuntimeClientError(
@@ -168,7 +164,7 @@ class ComputerSidecarProcess {
         this.pending.delete(id)
         this.shutdown()
         reject(new RuntimeClientError('action_timeout', `computer sidecar ${method} timed out`))
-      }, REQUEST_TIMEOUT_MS)
+      }, timeoutMs)
 
       this.pending.set(id, { resolve, reject, timer })
       child.send(request, (error) => {
@@ -198,6 +194,20 @@ class ComputerSidecarProcess {
       this.pending.delete(id)
     }
     child?.kill('SIGTERM')
+  }
+
+  /** Waits for the sidecar/helper shutdown acknowledgement before using TERM fallback. */
+  async shutdownGracefully(): Promise<void> {
+    const child = this.child
+    if (!child) {
+      return
+    }
+    await shutdownComputerSidecarProcess({
+      child,
+      requestShutdown: () => this.send('shutdown', {}, SHUTDOWN_TIMEOUT_MS),
+      terminate: () => this.shutdown(),
+      timeoutMs: SHUTDOWN_TIMEOUT_MS
+    })
   }
 
   private ensureStarted(): ChildProcess {

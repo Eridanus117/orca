@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -14,7 +14,9 @@ import { syncForkFromRelease } from './orca-fork-release-sync.mjs'
 import {
   abortPreparedUpdate,
   blockingForkDesktopProcesses,
+  completeUpdateHandoff,
   isDetachedDaemonProcess,
+  isStrictLegacyComputerHelper,
   prepareUpdateHandoff
 } from './orca-fork-update-handoff.mjs'
 
@@ -221,7 +223,7 @@ describe('orca-fork-macos', () => {
     expect(buildDryRunPlan('install')).toEqual(
       expect.arrayContaining([
         'Locate the existing Orca Fork build under dist/.',
-        'Snapshot the currently installed app and shared Orca profile as one rollback pair.',
+        'Replace history with one lightweight rollback pair for the installed app and shared profile.',
         'Do not launch the app.'
       ])
     )
@@ -261,10 +263,98 @@ describe('orca-fork-macos', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  it('removes the obsolete profile migration command and keeps rollback on v2 backups', () => {
+  it('cleans staging when preparation fails before the transaction is written', () => {
+    const root = mkdtempSync(join(tmpdir(), 'orca-fork-prepare-failure-'))
+    const installedApp = join(root, 'Orca Fork.app')
+
+    try {
+      expect(() =>
+        prepareUpdateHandoff({
+          builtApp: join(root, 'built.app'),
+          installedApp,
+          stateDirectory: root,
+          runtime: { pid: 42, runtimeId: 'runtime-old' },
+          cloneDirectory: (_source, target) => mkdirSync(target),
+          validateBundle: () => {
+            throw new Error('invalid bundle')
+          }
+        })
+      ).toThrow('invalid bundle')
+      expect(readdirSync(root)).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('cleans a prepared transaction when the old runtime never exits', async () => {
+    vi.useFakeTimers()
+    const root = mkdtempSync(join(tmpdir(), 'orca-fork-finalizer-failure-'))
+    const transaction = prepareUpdateHandoff({
+      builtApp: join(root, 'built.app'),
+      installedApp: join(root, 'Orca Fork.app'),
+      stateDirectory: root,
+      runtime: { pid: process.pid, runtimeId: 'runtime-old' },
+      cloneDirectory: (_source, target) => mkdirSync(target),
+      validateBundle: () => {}
+    })
+
+    try {
+      const completion = completeUpdateHandoff({
+        transactionPath: transaction.transactionPath,
+        appBundleName: 'Orca Fork',
+        sharedProfile: join(root, 'profile'),
+        capture: () => '',
+        createPairSnapshot: () => {},
+        validateBundle: () => {},
+        cleanManagedLegacyForkCli: () => {},
+        launchApp: () => {}
+      })
+      const rejection = expect(completion).rejects.toThrow('Orca Fork did not exit normally')
+      await vi.advanceTimersByTimeAsync(90_000)
+      await rejection
+
+      expect(existsSync(transaction.stagingApp)).toBe(false)
+      expect(existsSync(transaction.transactionPath)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('matches only the exact orphaned local Computer Use agent', () => {
+    const app = '/Users/example/Applications/Orca Fork.app'
+    const executable = `${app}/Contents/Resources/Orca Computer Use.app/Contents/MacOS/orca-computer-use-macos`
+
+    expect(
+      isStrictLegacyComputerHelper({
+        processLine: `9891 1 ${executable} --agent /tmp/provider.sock --token-file /tmp/provider.token`,
+        targetApp: app
+      })
+    ).toEqual({ pid: 9891 })
+    expect(
+      isStrictLegacyComputerHelper({
+        processLine: `9891 2 ${executable} --agent /tmp/provider.sock --token-file /tmp/provider.token`,
+        targetApp: app
+      })
+    ).toBeNull()
+    expect(
+      isStrictLegacyComputerHelper({
+        processLine: `25726 1 ${app}/Contents/Frameworks/Orca Fork Helper daemon-entry.js --socket x`,
+        targetApp: app
+      })
+    ).toBeNull()
+    expect(
+      isStrictLegacyComputerHelper({
+        processLine: `9891 1 /tmp/orca-computer-use-macos --agent /tmp/provider.sock --token-file /tmp/provider.token`,
+        targetApp: app
+      })
+    ).toBeNull()
+  })
+
+  it('removes the obsolete profile migration command and keeps rollback on supported backups', () => {
     expect(() => parseCommand(['migrate-profile'])).toThrow('Unknown command')
     expect(buildDryRunPlan('rollback')).toContain(
-      'Restore the newest v2 app/shared-profile pair and clear transient runtime state.'
+      'Restore the newest supported app/shared-profile pair and clear transient runtime state.'
     )
   })
 })

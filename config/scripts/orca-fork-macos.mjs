@@ -35,6 +35,14 @@ import {
   parseCommand,
   syncForkFromRelease
 } from './orca-fork-release-sync.mjs'
+import {
+  createAtomicPairSnapshot,
+  listPreservedLiveProfileEntries,
+  pruneSnapshotHistory,
+  removeLegacyAppOnlySnapshots,
+  TRANSIENT_PROFILE_ENTRY_NAMES
+} from './orca-fork-profile-snapshot.mjs'
+import { restoreSnapshotPair } from './orca-fork-rollback.mjs'
 
 export { parseCommand } from './orca-fork-release-sync.mjs'
 
@@ -50,22 +58,10 @@ const paths = {
   state: join(appSupportDir, 'Orca Fork Installer')
 }
 
-const BACKUP_SCHEMA = 'orca.local-distribution-backup/v2'
+const BACKUP_SCHEMA = 'orca.local-distribution-backup/v3'
+const LEGACY_BACKUP_SCHEMA = 'orca.local-distribution-backup/v2'
 const BACKUP_ROOT_NAME = 'shared-profile-backups'
-const TRANSIENT_PROFILE_NAMES = new Set([
-  'Cache',
-  'Code Cache',
-  'DawnCache',
-  'GPUCache',
-  'ShaderCache',
-  'SingletonCookie',
-  'SingletonLock',
-  'SingletonSocket',
-  'daemon',
-  'logs',
-  'orca-runtime.json',
-  'shell-ready'
-])
+const BACKUP_RETENTION = 1
 
 function run(command, args, options = {}) {
   return execFileSync(command, args, {
@@ -135,7 +131,7 @@ function cleanTransientProfileState(profileRoot) {
   }
   for (const name of readdirSync(profileRoot)) {
     if (
-      TRANSIENT_PROFILE_NAMES.has(name) ||
+      TRANSIENT_PROFILE_ENTRY_NAMES.has(name) ||
       /^o-\d+-.+\.sock$/u.test(name) ||
       name.endsWith('.sock')
     ) {
@@ -183,19 +179,18 @@ function resolveMacSdkRoot() {
   return sdkRoot
 }
 
-function createPairSnapshot(reason) {
+/**
+ * Creates one atomic rollback pair and prunes supported history to the requested limit.
+ *
+ * @param {string} reason Snapshot purpose recorded in its manifest.
+ * @param {{ retention?: number }} options Retention limit after publishing.
+ * @returns {string | null} Published snapshot directory, or null when nothing is installed.
+ */
+function createPairSnapshot(reason, { retention = BACKUP_RETENTION } = {}) {
   const appPresent = existsSync(paths.installedApp)
   const profilePresent = existsSync(paths.sharedProfile)
   if (!appPresent && !profilePresent) {
     return null
-  }
-  const snapshotDir = join(paths.state, BACKUP_ROOT_NAME, timestamp())
-  execFileSync('mkdir', ['-p', snapshotDir])
-  if (appPresent) {
-    cloneDirectory(paths.installedApp, join(snapshotDir, `${distribution.productName}.app`))
-  }
-  if (profilePresent) {
-    cloneDirectory(paths.sharedProfile, join(snapshotDir, distribution.userDataDirName))
   }
   const manifest = {
     schema: BACKUP_SCHEMA,
@@ -204,9 +199,29 @@ function createPairSnapshot(reason) {
     commit: currentCommit(),
     version: readPackageVersion(),
     appPresent,
-    profilePresent
+    profilePresent,
+    preservedLiveEntries: profilePresent
+      ? listPreservedLiveProfileEntries(paths.sharedProfile)
+      : [],
+    excludedTransientEntries: [...TRANSIENT_PROFILE_ENTRY_NAMES]
   }
-  writeFileSync(join(snapshotDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+  const backupRoot = join(paths.state, BACKUP_ROOT_NAME)
+  const snapshotDir = createAtomicPairSnapshot({
+    appSource: appPresent ? paths.installedApp : null,
+    appName: `${distribution.productName}.app`,
+    profileSource: profilePresent ? paths.sharedProfile : null,
+    profileName: distribution.userDataDirName,
+    backupRoot,
+    snapshotName: timestamp(),
+    manifest,
+    cloneDirectory
+  })
+  pruneSnapshotHistory(backupRoot, {
+    keep: retention,
+    acceptedSchemas: [BACKUP_SCHEMA, LEGACY_BACKUP_SCHEMA]
+  })
+  // Why: v1 stored only the app, so it cannot restore the app/profile pair consistently.
+  removeLegacyAppOnlySnapshots(join(paths.state, 'backups'))
   return snapshotDir
 }
 
@@ -387,40 +402,26 @@ function latestBackup() {
       .sort()
       .toReversed()
       .map((name) => join(backupRoot, name))
-      .find((candidate) => existsSync(join(candidate, 'manifest.json'))) ?? null
+      .find((candidate) => {
+        const manifestPath = join(candidate, 'manifest.json')
+        if (!existsSync(manifestPath)) {
+          return false
+        }
+        try {
+          const schema = JSON.parse(readFileSync(manifestPath, 'utf8')).schema
+          return schema === BACKUP_SCHEMA || schema === LEGACY_BACKUP_SCHEMA
+        } catch {
+          return false
+        }
+      }) ?? null
   )
 }
 
-function replaceFromSnapshot(source, target, present, label) {
-  const staging = `${target}.rollback-staging-${process.pid}`
-  const displaced = `${target}.rollback-displaced-${process.pid}`
-  rmSync(staging, { recursive: true, force: true })
-  if (present) {
-    cloneDirectory(source, staging)
-    if (label === 'profile') {
-      cleanTransientProfileState(staging)
-    } else {
-      // Why: the first post-migration backup is ad-hoc; rollback must remain
-      // available even though it can require granting TCC permissions again.
-      validateBundle(staging, { requireStableSignature: false })
-    }
-  }
-  if (existsSync(target)) {
-    renameSync(target, displaced)
-  }
-  try {
-    if (present) {
-      renameSync(staging, target)
-    }
-    rmSync(displaced, { recursive: true, force: true })
-  } catch (error) {
-    if (!existsSync(target) && existsSync(displaced)) {
-      renameSync(displaced, target)
-    }
-    throw error
-  }
-}
-
+/**
+ * Restores the latest supported pair while retaining one temporary compensation point.
+ *
+ * @returns {void}
+ */
 function rollback() {
   assertAllOrcaAppsStopped({ forkBundleName: distribution.productName, capture })
   cleanStaleInstallArtifacts()
@@ -429,22 +430,27 @@ function rollback() {
     throw new Error('No Orca Fork backup is available.')
   }
   const manifest = JSON.parse(readFileSync(join(backup, 'manifest.json'), 'utf8'))
-  if (manifest.schema !== BACKUP_SCHEMA) {
+  if (manifest.schema !== BACKUP_SCHEMA && manifest.schema !== LEGACY_BACKUP_SCHEMA) {
     throw new Error(`Unsupported backup schema: ${manifest.schema ?? '<missing>'}`)
   }
-  createPairSnapshot('pre-rollback')
-  replaceFromSnapshot(
-    join(backup, `${distribution.productName}.app`),
-    paths.installedApp,
-    manifest.appPresent,
-    'app'
-  )
-  replaceFromSnapshot(
-    join(backup, distribution.userDataDirName),
-    paths.sharedProfile,
-    manifest.profilePresent,
-    'profile'
-  )
+  // Why: rollback needs its target and a compensation point until the pair swap succeeds.
+  const safetyBackup = createPairSnapshot('pre-rollback', { retention: 2 })
+  restoreSnapshotPair({
+    backup,
+    manifest,
+    safetyBackup,
+    productName: distribution.productName,
+    userDataDirName: distribution.userDataDirName,
+    installedApp: paths.installedApp,
+    sharedProfile: paths.sharedProfile,
+    cloneDirectory,
+    cleanTransientProfileState,
+    validateBundle
+  })
+  pruneSnapshotHistory(join(paths.state, BACKUP_ROOT_NAME), {
+    keep: BACKUP_RETENTION,
+    acceptedSchemas: [BACKUP_SCHEMA, LEGACY_BACKUP_SCHEMA]
+  })
   cleanManagedLegacyForkCli()
 }
 
@@ -468,7 +474,7 @@ export function buildDryRunPlan(command, from, base) {
         'Require official Orca, Orca Fork, and their bundle helpers to be stopped.',
         'Locate the existing Orca Fork build under dist/.',
         'Validate bundle id, executable, resources, and code signature.',
-        'Snapshot the currently installed app and shared Orca profile as one rollback pair.',
+        'Replace history with one lightweight rollback pair for the installed app and shared profile.',
         `Atomically install ${paths.installedApp} without changing the global orca command.`,
         'Remove abandoned staging apps and the retired managed orca-fork symlink.',
         'Do not launch the app.'
@@ -483,13 +489,13 @@ export function buildDryRunPlan(command, from, base) {
         'Bootstrap older Fork builds after a manual normal quit while allowing only the daemon.',
         `Atomically install ${paths.installedApp} without changing the global orca command.`,
         'Relaunch in the background; remove the previous app after the new runtime is ready.',
-        'Never send TERM or KILL as an update fallback.'
+        'Never send KILL; TERM only an exact PPID-1 legacy Computer Use orphan after revalidation.'
       ]
     case 'rollback':
       return [
         'Require official Orca, Orca Fork, and their bundle helpers to be stopped.',
         'Snapshot the current app/shared-profile pair.',
-        'Restore the newest v2 app/shared-profile pair and clear transient runtime state.'
+        'Restore the newest supported app/shared-profile pair and clear transient runtime state.'
       ]
   }
 }

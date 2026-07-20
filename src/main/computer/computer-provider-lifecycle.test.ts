@@ -9,7 +9,8 @@ function provider(name: string) {
     listWindows: vi.fn(),
     snapshot: vi.fn(),
     action: vi.fn(),
-    shutdown: vi.fn()
+    shutdown: vi.fn(),
+    shutdownGracefully: vi.fn().mockResolvedValue(undefined)
   }
 }
 
@@ -58,6 +59,22 @@ describe('ComputerProviderLifecycle', () => {
     })
 
     expect(lifecycle.current('linux')).toBe(desktopProvider)
+  })
+
+  it('awaits native provider shutdown before clearing the lifecycle', async () => {
+    const macProvider = provider('mac')
+    const lifecycle = new ComputerProviderLifecycle({
+      shouldUseMacOSNativeProvider: vi.fn(() => true),
+      createMacOSNativeProvider: vi.fn(() => macProvider as never),
+      shouldUseDesktopScriptProvider: vi.fn(() => false),
+      createDesktopScriptProvider: vi.fn()
+    })
+    expect(lifecycle.current('darwin')).toBe(macProvider)
+
+    await lifecycle.shutdownGracefully()
+
+    expect(macProvider.shutdownGracefully).toHaveBeenCalledTimes(1)
+    expect(lifecycle.current('darwin')).toBe(macProvider)
   })
 
   it('shuts down the desktop script provider', () => {

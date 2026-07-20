@@ -1,4 +1,3 @@
-import { rmSync } from 'node:fs'
 import type net from 'node:net'
 import type {
   ComputerActionResult,
@@ -8,9 +7,9 @@ import type {
   ComputerSnapshotResult
 } from '../../shared/runtime-types'
 import {
-  assertMacOSProviderCapability,
   macOSActionCapabilityKey,
   REQUIRED_MACOS_PROVIDER_PROTOCOL_VERSION,
+  requireMacOSProviderCapability,
   type NativeActionMethod,
   type NativeMethod,
   type NativeResponse,
@@ -25,9 +24,15 @@ import {
 } from './macos-native-provider-transport'
 import { validateComputerProviderActionParams } from './computer-provider-action-validation'
 import { normalizeComputerActionResult } from './computer-action-verification-normalization'
+import {
+  rejectPendingNativeRequests,
+  removeNativeSocketDirectory,
+  releaseNativeSocketListeners
+} from './macos-native-provider-state-cleanup'
 import { RuntimeClientError } from './runtime-client-error'
 
 const REQUEST_TIMEOUT_MS = 60_000
+const SHUTDOWN_TIMEOUT_MS = 5_000
 
 export class MacOSNativeProviderClient {
   private socket: net.Socket | null = null
@@ -63,7 +68,7 @@ export class MacOSNativeProviderClient {
     await this.ensureActionSupported(method)
     return normalizeComputerActionResult((await this.call(method, params)) as ComputerActionResult)
   }
-  shutdown(): void {
+  shutdown(sendTerminate = true): void {
     const socket = this.socket
     const token = this.socketToken
     this.socket = null
@@ -71,10 +76,12 @@ export class MacOSNativeProviderClient {
     this.socketStartGeneration++
     this.providerCapabilities = null
     this.socketBuffer = ''
-    this.cleanupActiveSocketListeners()
+    this.socketListenerCleanup = releaseNativeSocketListeners(this.socketListenerCleanup)
     if (socket && !socket.destroyed) {
-      const id = this.nextId++
-      socket.write(`${JSON.stringify({ id, method: 'terminate', params: {}, token })}\n`)
+      if (sendTerminate) {
+        const id = this.nextId++
+        socket.write(`${JSON.stringify({ id, method: 'terminate', params: {}, token })}\n`)
+      }
       socket.end()
     }
     for (const [id, pending] of this.pending) {
@@ -84,7 +91,19 @@ export class MacOSNativeProviderClient {
       )
       this.pending.delete(id)
     }
-    this.cleanupSocketDirectory()
+    ;[this.socketDirectory, this.socketPath] = removeNativeSocketDirectory(this.socketDirectory)
+  }
+  /** Waits until the signed helper acknowledges its authenticated terminate request. */
+  async shutdownGracefully(): Promise<void> {
+    if (!this.socket || this.socket.destroyed) {
+      this.shutdown()
+      return
+    }
+    try {
+      await this.send('terminate', {}, SHUTDOWN_TIMEOUT_MS)
+    } finally {
+      this.shutdown(false)
+    }
   }
   private async call(method: NativeMethod, params: unknown): Promise<unknown> {
     if (method !== 'handshake') {
@@ -92,7 +111,11 @@ export class MacOSNativeProviderClient {
     }
     return await this.send(method, params)
   }
-  private async send(method: NativeMethod, params: unknown): Promise<unknown> {
+  private async send(
+    method: NativeMethod,
+    params: unknown,
+    timeoutMs = REQUEST_TIMEOUT_MS
+  ): Promise<unknown> {
     const id = this.nextId++
     const helperExecutablePath = resolveMacOSComputerUseExecutablePath()
     if (!helperExecutablePath) {
@@ -108,7 +131,7 @@ export class MacOSNativeProviderClient {
         reject(
           new RuntimeClientError('action_timeout', `native macOS provider ${method} timed out`)
         )
-      }, REQUEST_TIMEOUT_MS)
+      }, timeoutMs)
 
       this.pending.set(id, { resolve, reject, timer })
     })
@@ -156,13 +179,7 @@ export class MacOSNativeProviderClient {
     capability: string
   ): Promise<void> {
     await this.ensureCompatible()
-    if (assertMacOSProviderCapability(this.providerCapabilities, group, capability)) {
-      return
-    }
-    throw new RuntimeClientError(
-      'unsupported_capability',
-      `native macOS provider does not support ${String(group)}.${capability}`
-    )
+    requireMacOSProviderCapability(this.providerCapabilities, group, capability)
   }
   private async ensureActionSupported(method: NativeActionMethod): Promise<void> {
     await this.ensureCapability('actions', macOSActionCapabilityKey(method))
@@ -171,7 +188,7 @@ export class MacOSNativeProviderClient {
     if (this.socket && !this.socket.destroyed) {
       return this.socket
     }
-    this.cleanupActiveSocketListeners()
+    this.socketListenerCleanup = releaseNativeSocketListeners(this.socketListenerCleanup)
     this.socket = null
     if (this.socketStartPromise) {
       return await this.socketStartPromise
@@ -243,11 +260,12 @@ export class MacOSNativeProviderClient {
     if (this.socket !== socket) {
       return
     }
-    this.cleanupActiveSocketListeners()
+    this.socketListenerCleanup = releaseNativeSocketListeners(this.socketListenerCleanup)
     this.socket = null
     this.socketBuffer = ''
-    this.cleanupSocketDirectory()
-    this.rejectPending(
+    ;[this.socketDirectory, this.socketPath] = removeNativeSocketDirectory(this.socketDirectory)
+    rejectPendingNativeRequests(
+      this.pending,
       new RuntimeClientError('accessibility_error', 'native macOS helper app connection closed')
     )
   }
@@ -256,15 +274,18 @@ export class MacOSNativeProviderClient {
     if (this.socket !== socket) {
       return
     }
-    this.cleanupActiveSocketListeners()
+    this.socketListenerCleanup = releaseNativeSocketListeners(this.socketListenerCleanup)
     // Why: an active transport error makes the helper socket unreliable for the next request.
     this.socket = null
     this.socketBuffer = ''
     if (!socket.destroyed) {
       socket.destroy()
     }
-    this.cleanupSocketDirectory()
-    this.rejectPending(new RuntimeClientError('accessibility_error', error.message))
+    ;[this.socketDirectory, this.socketPath] = removeNativeSocketDirectory(this.socketDirectory)
+    rejectPendingNativeRequests(
+      this.pending,
+      new RuntimeClientError('accessibility_error', error.message)
+    )
   }
   private invalidateActiveSocketAfterWriteFailure(
     socket: net.Socket,
@@ -273,33 +294,13 @@ export class MacOSNativeProviderClient {
     if (this.socket !== socket) {
       return
     }
-    this.cleanupActiveSocketListeners()
+    this.socketListenerCleanup = releaseNativeSocketListeners(this.socketListenerCleanup)
     this.socket = null
     this.socketBuffer = ''
     if (!socket.destroyed) {
       socket.destroy()
     }
-    this.cleanupSocketDirectory()
-    this.rejectPending(error)
-  }
-  private cleanupSocketDirectory(): void {
-    if (!this.socketDirectory) {
-      return
-    }
-    rmSync(this.socketDirectory, { recursive: true, force: true })
-    this.socketDirectory = null
-    this.socketPath = null
-  }
-  private rejectPending(error: Error): void {
-    for (const [id, pending] of this.pending) {
-      clearTimeout(pending.timer)
-      pending.reject(error)
-      this.pending.delete(id)
-    }
-  }
-  private cleanupActiveSocketListeners(): void {
-    const cleanup = this.socketListenerCleanup
-    this.socketListenerCleanup = null
-    cleanup?.()
+    ;[this.socketDirectory, this.socketPath] = removeNativeSocketDirectory(this.socketDirectory)
+    rejectPendingNativeRequests(this.pending, error)
   }
 }

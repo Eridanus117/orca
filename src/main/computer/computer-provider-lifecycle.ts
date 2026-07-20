@@ -54,6 +54,16 @@ export class ComputerProviderLifecycle {
     this.desktopScriptProvider?.shutdown()
     this.desktopScriptProvider = null
   }
+
+  /** Awaits native helper shutdown while keeping script-provider cleanup synchronous. */
+  async shutdownGracefully(): Promise<void> {
+    const nativeMacOSProvider = this.nativeMacOSProvider
+    this.nativeMacOSProvider = null
+    const desktopScriptProvider = this.desktopScriptProvider
+    this.desktopScriptProvider = null
+    desktopScriptProvider?.shutdown()
+    await nativeMacOSProvider?.shutdownGracefully()
+  }
 }
 
 const lifecycle = new ComputerProviderLifecycle()
@@ -64,4 +74,9 @@ export function currentComputerProvider(): ComputerProvider | null {
 
 export function shutdownComputerProviders(): void {
   lifecycle.shutdown()
+}
+
+/** Gracefully shuts down every instantiated computer provider. */
+export async function shutdownComputerProvidersGracefully(): Promise<void> {
+  await lifecycle.shutdownGracefully()
 }

@@ -8,7 +8,8 @@ import {
 import {
   callComputerSidecarAction,
   callComputerSidecarCapabilities,
-  resetComputerSidecarForTest
+  resetComputerSidecarForTest,
+  shutdownComputerSidecar
 } from './sidecar-client'
 
 const { forkMock } = vi.hoisted(() => ({
@@ -361,5 +362,38 @@ describe('computer sidecar client', () => {
     expect(children[0]!.listenerCount('message')).toBe(0)
     expect(children[0]!.listenerCount('exit')).toBe(0)
     expect(children[0]!.listenerCount('error')).toBe(1)
+  })
+
+  it('waits for the sidecar shutdown acknowledgement and process exit', async () => {
+    const capabilities = callComputerSidecarCapabilities()
+    const child = children[0]!
+    const request = child.sent[0]!
+    child.emit('message', { id: request.id, ok: true, result: {} })
+    await capabilities
+
+    const shutdown = shutdownComputerSidecar()
+    const shutdownRequest = child.sent.at(-1)!
+    expect(shutdownRequest.method).toBe('shutdown')
+    expect(child.killed).toBe(false)
+
+    child.emit('message', { id: shutdownRequest.id, ok: true, result: { ok: true } })
+    child.emit('exit', 0, null)
+
+    await expect(shutdown).resolves.toBeUndefined()
+    expect(child.killed).toBe(false)
+  })
+
+  it('terminates an unresponsive sidecar once after the graceful timeout', async () => {
+    const capabilities = callComputerSidecarCapabilities()
+    const child = children[0]!
+    const request = child.sent[0]!
+    child.emit('message', { id: request.id, ok: true, result: {} })
+    await capabilities
+
+    const shutdown = shutdownComputerSidecar()
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    await expect(shutdown).resolves.toBeUndefined()
+    expect(child.killed).toBe(true)
   })
 })

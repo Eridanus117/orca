@@ -1,5 +1,6 @@
 import type net from 'node:net'
 import type { ComputerProviderCapabilities } from '../../shared/runtime-types'
+import { RuntimeClientError } from './runtime-client-error'
 
 export type NativeMethod =
   | 'handshake'
@@ -41,6 +42,21 @@ export function assertMacOSProviderCapability(
 ): boolean {
   const groupCapabilities = capabilities?.supports[group] as Record<string, boolean> | undefined
   return groupCapabilities?.[capability] === true
+}
+
+/** Throws the provider-facing error for one unsupported capability. */
+export function requireMacOSProviderCapability(
+  capabilities: ComputerProviderCapabilities | null,
+  group: keyof ComputerProviderCapabilities['supports'],
+  capability: string
+): void {
+  if (assertMacOSProviderCapability(capabilities, group, capability)) {
+    return
+  }
+  throw new RuntimeClientError(
+    'unsupported_capability',
+    `native macOS provider does not support ${String(group)}.${capability}`
+  )
 }
 
 export function macOSActionCapabilityKey(

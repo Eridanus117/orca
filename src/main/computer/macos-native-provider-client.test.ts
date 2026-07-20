@@ -430,6 +430,35 @@ describe('MacOSNativeProviderClient', () => {
     })
   })
 
+  it('waits for the helper terminate acknowledgement during graceful shutdown', async () => {
+    const { MacOSNativeProviderClient } = await loadClientModule()
+    const client = new MacOSNativeProviderClient()
+    const capabilities = client.capabilities()
+    await vi.waitFor(() => expect(sockets).toHaveLength(1))
+    const socket = sockets[0]!
+    await vi.waitFor(() => expect(socket.writes).toHaveLength(1))
+    const handshake = JSON.parse(socket.writes[0]!) as { id: number }
+    socket.emit(
+      'data',
+      `${JSON.stringify({
+        id: handshake.id,
+        ok: true,
+        result: { protocolVersion: 1, supports: {} }
+      })}\n`
+    )
+    await capabilities
+
+    const shutdown = client.shutdownGracefully()
+    await vi.waitFor(() => expect(socket.writes).toHaveLength(2))
+    const terminate = JSON.parse(socket.writes[1]!) as { id: number; method: string }
+    expect(terminate.method).toBe('terminate')
+    expect(socket.destroyed).toBe(false)
+    socket.emit('data', `${JSON.stringify({ id: terminate.id, ok: true, result: { ok: true } })}\n`)
+
+    await expect(shutdown).resolves.toBeUndefined()
+    expect(socket.destroyed).toBe(true)
+  })
+
   it('rejects helper spawn errors before socket connection and removes temp state', async () => {
     const { MacOSNativeProviderClient } = await loadClientModule()
     const client = new MacOSNativeProviderClient()

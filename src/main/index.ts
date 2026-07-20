@@ -26,6 +26,7 @@ import { ClaudeUsageStore, initClaudeUsagePath } from './claude-usage/store'
 import { CodexUsageStore, initCodexUsagePath } from './codex-usage/store'
 import { OpenCodeUsageStore, initOpenCodeUsagePath } from './opencode-usage/store'
 import { killAllPty } from './ipc/pty'
+import { shutdownComputerSidecar } from './computer/sidecar-client'
 import { initDaemonPtyProvider, disconnectDaemon, shutdownDaemon } from './daemon/daemon-init'
 import { closeAllWatchers } from './ipc/filesystem-watcher'
 import { disposeWorktreeBaseDirectoryWatchers } from './ipc/worktree-base-directory-watcher'
@@ -56,11 +57,7 @@ import {
   registerAppMenu,
   rebuildAppMenu
 } from './menu/register-app-menu'
-import {
-  checkForUpdatesFromMenu,
-  isQuittingForUpdate,
-  requestLocalForkUpdateQuit
-} from './updater'
+import { checkForUpdatesFromMenu, isQuittingForUpdate, requestLocalForkUpdateQuit } from './updater'
 import type { UpdateCheckOptions } from '../shared/types'
 import { recordUpdaterLifecycle } from './updater-lifecycle-diagnostics'
 import {
@@ -2535,7 +2532,14 @@ app.on('will-quit', (e) => {
     // Why: normal quits preserve the detached daemon for warm reattach, but a
     // dev parent dying means the temp/dev profile has no owner left to reattach.
     const daemonTeardown = isDevParentShutdownRequested() ? shutdownDaemon() : disconnectDaemon()
-    Promise.allSettled([daemonTeardown, rpcStopAndClear, watcherShutdown, emulatorShutdown])
+    const computerSidecarShutdown = shutdownComputerSidecar()
+    Promise.allSettled([
+      daemonTeardown,
+      rpcStopAndClear,
+      watcherShutdown,
+      emulatorShutdown,
+      computerSidecarShutdown
+    ])
       .then(() => shutdownTelemetry())
       .then(() => shutdownObservability())
       .catch(() => {

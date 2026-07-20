@@ -1,5 +1,9 @@
 import { computerProviderUnavailableMessage } from './computer-provider-unavailable-message'
-import { currentComputerProvider, shutdownComputerProviders } from './computer-provider-lifecycle'
+import {
+  currentComputerProvider,
+  shutdownComputerProviders,
+  shutdownComputerProvidersGracefully
+} from './computer-provider-lifecycle'
 import { RuntimeClientError } from './runtime-client-error'
 
 type SidecarRequest = {
@@ -8,14 +12,14 @@ type SidecarRequest = {
   params?: Record<string, unknown>
 }
 
-process.once('disconnect', shutdownProviders)
+process.once('disconnect', () => {
+  void shutdownProvidersGracefully().finally(() => process.exit(0))
+})
 process.once('SIGTERM', () => {
-  shutdownProviders()
-  process.exit(0)
+  void shutdownProvidersGracefully().finally(() => process.exit(0))
 })
 process.once('SIGINT', () => {
-  shutdownProviders()
-  process.exit(130)
+  void shutdownProvidersGracefully().finally(() => process.exit(130))
 })
 process.once('beforeExit', shutdownProviders)
 
@@ -30,7 +34,11 @@ async function handleMessage(message: unknown): Promise<void> {
 
   try {
     const result = await dispatch(message.method, message.params ?? {})
-    process.send?.({ id: message.id, ok: true, result })
+    process.send?.({ id: message.id, ok: true, result }, () => {
+      if (message.method === 'shutdown' && process.connected) {
+        process.disconnect?.()
+      }
+    })
   } catch (error) {
     const mapped = errorToResponse(error)
     process.send?.({ id: message.id, ok: false, error: mapped })
@@ -38,6 +46,10 @@ async function handleMessage(message: unknown): Promise<void> {
 }
 
 async function dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
+  if (method === 'shutdown') {
+    await shutdownProvidersGracefully()
+    return { ok: true }
+  }
   const provider = currentComputerProvider()
   if (!provider) {
     throw new RuntimeClientError(
@@ -122,4 +134,9 @@ function errorToResponse(error: unknown): { code: string; message: string } {
 
 function shutdownProviders(): void {
   shutdownComputerProviders()
+}
+
+/** Awaits native helper acknowledgement before the sidecar process exits. */
+async function shutdownProvidersGracefully(): Promise<void> {
+  await shutdownComputerProvidersGracefully()
 }
