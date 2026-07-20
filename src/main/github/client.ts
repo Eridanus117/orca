@@ -48,7 +48,6 @@ import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import { joinWorktreeRelativePath } from '../runtime/runtime-relative-paths'
 import { splitRemoteBranchName } from '../../shared/git-effective-upstream'
 import {
-  execFileAsync,
   ghExecFileAsync,
   gitExecFileAsync,
   acquire,
@@ -223,8 +222,7 @@ function isNoPullRequestError(err: unknown): boolean {
 export async function checkOrcaStarred(): Promise<boolean | null> {
   await acquire()
   try {
-    const { stdout, stderr } = await execFileAsync(
-      'gh',
+    const { stdout, stderr } = await ghExecFileAsync(
       ['api', '--include', `user/starred/${ORCA_REPO}`],
       { encoding: 'utf-8' }
     )
@@ -383,7 +381,7 @@ export async function getPullRequestPushTarget(
 export async function starOrca(): Promise<boolean> {
   await acquire()
   try {
-    await execFileAsync('gh', ['api', '-X', 'PUT', `user/starred/${ORCA_REPO}`], {
+    await ghExecFileAsync(['api', '-X', 'PUT', `user/starred/${ORCA_REPO}`], {
       encoding: 'utf-8'
     })
     return true
@@ -401,8 +399,7 @@ export async function starOrca(): Promise<boolean> {
 export async function getAuthenticatedViewer(): Promise<GitHubViewer | null> {
   await acquire()
   try {
-    const { stdout } = await execFileAsync(
-      'gh',
+    const { stdout } = await ghExecFileAsync(
       ['api', 'user', '--jq', '{login: .login, email: .email}'],
       { encoding: 'utf-8' }
     )
