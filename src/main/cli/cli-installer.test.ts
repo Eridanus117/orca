@@ -210,6 +210,33 @@ describe('CliInstaller', () => {
     }
   )
 
+  it.skipIf(process.platform === 'win32')(
+    'uses a user-writable macOS path for default development installs',
+    async () => {
+      const fixture = await makeFixture()
+      const homePath = join(fixture.root, 'home')
+      const commandDir = join(homePath, '.local', 'bin')
+      const privilegedRunner = vi.fn()
+      const installer = new CliInstaller({
+        platform: 'darwin',
+        isPackaged: false,
+        userDataPath: fixture.userDataPath,
+        execPath: '/Applications/Orca.app/Contents/MacOS/Orca',
+        appPath: fixture.appPath,
+        homePath,
+        processPathEnv: commandDir,
+        privilegedRunner
+      })
+
+      const installed = await installer.install()
+      expect(installed.state).toBe('installed')
+      expect(installed.commandName).toBe('orca-dev')
+      expect(installed.commandPath).toBe(join(commandDir, 'orca-dev'))
+      expect(privilegedRunner).not.toHaveBeenCalled()
+      await expect(readlink(installed.commandPath as string)).resolves.toBe(installed.launcherPath)
+    }
+  )
+
   // Why: AppImage resources live under a per-launch FUSE mount, so the
   // installed shell command must be a stable wrapper rather than a symlink.
   it.skipIf(process.platform === 'win32')(
