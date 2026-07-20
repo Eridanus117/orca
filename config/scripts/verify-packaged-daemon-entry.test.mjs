@@ -43,6 +43,20 @@ describe('verify-packaged-daemon-entry', () => {
     expect(() => verifyPackagedDaemonEntryBoots(resourcesDir)).not.toThrow()
   })
 
+  it('allows a packaged entry to finish under sustained build load', () => {
+    let spawnOptions
+    writePackagedEntry('console.error("Usage: daemon-entry <socket>"); process.exit(1)\n')
+
+    verifyPackagedDaemonEntryBoots(resourcesDir, {
+      spawnSync: (_execPath, _args, options) => {
+        spawnOptions = options
+        return { stderr: 'Usage: daemon-entry <socket>' }
+      }
+    })
+
+    expect(spawnOptions.timeout).toBe(60_000)
+  })
+
   it('fails when the packaged entry cannot resolve its module graph', () => {
     writePackagedEntry('require("orca-module-that-does-not-exist")\n')
     expect(() => verifyPackagedDaemonEntryBoots(resourcesDir)).toThrow(
