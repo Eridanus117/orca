@@ -49,6 +49,15 @@ Projects:
   project setup-update      Update project host setup metadata
   project setup-delete      Remove a project host setup
 
+Workspace Organization:
+  project-group list        List sidebar Project Groups
+  project-group create      Create a sidebar Project Group
+  project-group update      Rename or reorder a sidebar Project Group
+  project-group move-project Move a registered project into a Project Group
+  folder-workspace list     List item-level Folder Workspaces
+  folder-workspace create   Create an item-level Folder Workspace
+  folder-workspace update   Update an item-level Folder Workspace
+
 Repos:
   repo list                 List repos registered in Orca
   repo add                  Add a project to Orca by filesystem path
@@ -232,6 +241,13 @@ Common Commands:
   orca project setup-create --project <id> --host <host-id> [--setup-id <id>] [--path <path>] [--kind git|folder] [--display-name <name>] [--worktree-base-path <path>] [--git-username <name>] [--state ready|not-set-up|setting-up|error|unsupported] [--method imported-existing-folder|cloned|provisioned] [--json]
   orca project setup-update --setup <setup-id> [--display-name <name>] [--path <path>] [--worktree-base-path <path>] [--git-username <name>] [--kind git|folder] [--state ready|not-set-up|setting-up|error|unsupported] [--method legacy-repo|imported-existing-folder|cloned|provisioned] [--json]
   orca project setup-delete --setup <setup-id> [--json]
+  orca project-group list [--json]
+  orca project-group create --name <name> [--parent-path <path>] [--json]
+  orca project-group update --group <id> [--name <name>] [--order <n>] [--json]
+  orca project-group move-project --repo <selector> --group <id> [--order <n>] [--json]
+  orca folder-workspace list [--group <id>] [--json]
+  orca folder-workspace create --group <id> --name <name> --path <path> [--json]
+  orca folder-workspace update --folder <id> [--name <name>] [--path <path>] [--comment <text>] [--workspace-status <id>] [--archived true|false] [--json]
   orca repo list [--json]
   orca repo add --path <path> [--json]
   orca repo show --repo <selector> [--json]
@@ -452,7 +468,7 @@ function formatCommandFlagHelp(flag: string, commandPath: string[]): string {
   if (command === 'linear create' && flag === 'parent-current') {
     return '--parent-current      Use the current linked issue as parent'
   }
-  if (command === 'worktree create' && flag === 'parent-worktree') {
+  if ((command === 'worktree create' || command === 'worktree set') && flag === 'parent-worktree') {
     return '--parent-worktree <selector> Parent selector such as active/current, id:<repo-id>::<path>, branch:<branch>, issue:<number>, path:<path>, folder:<id>, or worktree:<worktreeId>'
   }
   if (command === 'orchestration task-create' && flag === 'task-title') {

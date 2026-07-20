@@ -214,13 +214,20 @@ export const WorktreeSet = WorktreeSelector.extend({
     .optional(),
   diffComments: z.array(z.unknown()).optional(),
   mobileDiffReview: z.unknown().optional(),
+  parentWorkspace: OptionalString,
   parentWorktree: OptionalString,
   noParent: OptionalBoolean
 }).superRefine((params, ctx) => {
-  if (params.parentWorktree && params.noParent === true) {
+  if ((params.parentWorkspace || params.parentWorktree) && params.noParent === true) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'Choose either --parent-worktree or --no-parent, not both.'
+      message: 'Choose either one parent selector or --no-parent.'
+    })
+  }
+  if (params.parentWorkspace && params.parentWorktree) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Choose either one parent selector or --no-parent.'
     })
   }
 })

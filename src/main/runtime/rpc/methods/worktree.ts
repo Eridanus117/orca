@@ -194,8 +194,9 @@ export const WORKTREE_METHODS: RpcMethod[] = [
         diffComments: params.diffComments,
         mobileDiffReview: params.mobileDiffReview,
         lineage:
-          params.parentWorktree || params.noParent === true
+          params.parentWorkspace || params.parentWorktree || params.noParent === true
             ? {
+                parentWorkspace: params.parentWorkspace,
                 parentWorktree: params.parentWorktree,
                 noParent: params.noParent === true
               }

@@ -17736,6 +17736,7 @@ export class OrcaRuntimeService {
     updates: Omit<Partial<WorktreeMeta>, 'pushTarget'> & {
       pushTarget?: GitPushTarget | null
       lineage?: {
+        parentWorkspace?: string
         parentWorktree?: string
         noParent?: boolean
       }
@@ -17746,7 +17747,7 @@ export class OrcaRuntimeService {
     }
     const worktree = await this.resolveWorktreeSelector(worktreeSelector)
     const { lineage, ...metaUpdates } = updates
-    if (lineage?.parentWorktree) {
+    if (lineage?.parentWorkspace || lineage?.parentWorktree) {
       this.invalidateResolvedWorktreeCache()
       this.invalidateWorktreeScanCacheForRepo(worktree.repoId)
     }
@@ -17773,41 +17774,68 @@ export class OrcaRuntimeService {
     if (lineage?.noParent === true) {
       this.store.removeWorktreeLineage?.(worktree.id)
       this.store.removeWorkspaceLineage?.(worktreeWorkspaceKey(worktree.id))
-    } else if (lineage?.parentWorktree) {
-      const parent = await this.resolveWorktreeSelector(lineage.parentWorktree)
-
-      this.validateLineageParent(worktree, parent)
-      if (!worktree.instanceId || !parent.instanceId) {
+    } else if (lineage?.parentWorkspace || lineage?.parentWorktree) {
+      const parent = await this.resolveWorkspaceParentSelector(
+        lineage.parentWorkspace ?? lineage.parentWorktree!
+      )
+      if (!worktree.instanceId) {
         throw new RuntimeLineageError(
           'LINEAGE_PARENT_CONTEXT_MISSING',
           'Worktree instance identity was unavailable.'
         )
       }
-      if (!this.store.setWorktreeLineage) {
-        throw new RuntimeLineageError(
-          'LINEAGE_PARENT_CONTEXT_MISSING',
-          'Worktree lineage storage was unavailable.'
-        )
-      }
       const createdAt = Date.now()
-      this.store.setWorktreeLineage(worktree.id, {
-        worktreeId: worktree.id,
-        worktreeInstanceId: worktree.instanceId,
-        parentWorktreeId: parent.id,
-        parentWorktreeInstanceId: parent.instanceId,
-        origin: 'manual',
-        capture: { source: 'manual-action', confidence: 'explicit' },
-        createdAt
-      })
-      this.store.setWorkspaceLineage?.({
-        childWorkspaceKey: worktreeWorkspaceKey(worktree.id),
-        childInstanceId: worktree.instanceId,
-        parentWorkspaceKey: worktreeWorkspaceKey(parent.id),
-        parentInstanceId: parent.instanceId,
-        origin: 'manual',
-        capture: { source: 'manual-action', confidence: 'explicit' },
-        createdAt
-      })
+      if (parent.type === 'worktree') {
+        this.validateLineageParent(worktree, parent.worktree)
+        if (!parent.worktree.instanceId) {
+          throw new RuntimeLineageError(
+            'LINEAGE_PARENT_CONTEXT_MISSING',
+            'Worktree instance identity was unavailable.'
+          )
+        }
+        if (!this.store.setWorktreeLineage) {
+          throw new RuntimeLineageError(
+            'LINEAGE_PARENT_CONTEXT_MISSING',
+            'Worktree lineage storage was unavailable.'
+          )
+        }
+        this.store.setWorktreeLineage(worktree.id, {
+          worktreeId: worktree.id,
+          worktreeInstanceId: worktree.instanceId,
+          parentWorktreeId: parent.worktree.id,
+          parentWorktreeInstanceId: parent.worktree.instanceId,
+          origin: 'manual',
+          capture: { source: 'manual-action', confidence: 'explicit' },
+          createdAt
+        })
+        this.store.setWorkspaceLineage?.({
+          childWorkspaceKey: worktreeWorkspaceKey(worktree.id),
+          childInstanceId: worktree.instanceId,
+          parentWorkspaceKey: parent.workspaceKey,
+          parentInstanceId: parent.worktree.instanceId,
+          origin: 'manual',
+          capture: { source: 'manual-action', confidence: 'explicit' },
+          createdAt
+        })
+      } else {
+        if (!this.store.setWorkspaceLineage || !this.store.removeWorktreeLineage) {
+          throw new RuntimeLineageError(
+            'LINEAGE_PARENT_CONTEXT_MISSING',
+            'Workspace lineage storage was unavailable.'
+          )
+        }
+        // Why: legacy worktree-only lineage cannot represent a Folder Workspace parent.
+        this.store.removeWorktreeLineage(worktree.id)
+        this.store.setWorkspaceLineage({
+          childWorkspaceKey: worktreeWorkspaceKey(worktree.id),
+          childInstanceId: worktree.instanceId,
+          parentWorkspaceKey: parent.workspaceKey,
+          parentInstanceId: null,
+          origin: 'manual',
+          capture: { source: 'manual-action', confidence: 'explicit' },
+          createdAt
+        })
+      }
     }
     this.store.setWorktreeMeta(worktree.id, stripOrcaProvenanceMetaUpdates(persistedMetaUpdates))
     // Why: unlike renderer-initiated optimistic updates, CLI callers need an
